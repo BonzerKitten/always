@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<meta name="theme-color" content="#070b1f">
+<title>Sempre</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='-1 -1 2 2'%3E%3Cpath d='M0-1Q.12-.12 1 0Q.12.12 0 1Q-.12.12-1 0Q-.12-.12 0-1Z' fill='%23ff86b3'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="sky" id="sky" aria-hidden="true"></div>
+
+<div class="page">
+  <div class="meander" aria-hidden="true"></div>
+
+  <header>
+    <h1 id="title"></h1>
+    <p class="since" id="subtitle"></p>
+  </header>
+
+  <main>
+    <section class="hero">
+      <p class="num" id="hero-number"></p>
+      <p class="label" id="hero-label"></p>
+      <div class="rule"></div>
+      <p class="sub" id="hero-breakdown"></p>
+    </section>
+
+    <div class="globe-slot">
+      <div class="globe" id="globe">
+        <div class="stage">
+          <!-- Decoration behind the globe: soft halo, whole orbit rings and floating sparkles. Never catches clicks or touches. -->
+          <svg class="deco deco-back" viewBox="-46 -14 292 262" aria-hidden="true">
+            <defs>
+              <radialGradient id="halo" cx="100" cy="100" r="150" gradientUnits="userSpaceOnUse">
+                <stop offset=".62" stop-color="#8fa8ff" stop-opacity=".30"/>
+                <stop offset=".70" stop-color="#8fa8ff" stop-opacity=".10"/>
+                <stop offset="1" stop-color="#8fa8ff" stop-opacity="0"/>
+              </radialGradient>
+              <symbol id="sparkle" viewBox="-1 -1 2 2"><path d="M0-1Q.12-.12 1 0Q.12.12 0 1Q-.12.12-1 0Q-.12-.12 0-1Z"/></symbol>
+            </defs>
+            <circle cx="100" cy="100" r="150" fill="url(#halo)"/>
+            <g class="ring">
+              <ellipse cx="100" cy="100" rx="140" ry="36" transform="rotate(-22 100 100)"/>
+              <ellipse class="ring-2" cx="100" cy="100" rx="114" ry="23" transform="rotate(14 100 100)"/>
+            </g>
+          </svg>
+
+          <canvas class="globe-canvas" id="globe-canvas" role="img" aria-label="Globo com os lugares que visitamos"></canvas>
+
+          <!-- Decoration in front of the globe: the near half of each ring, then the sparkles. -->
+          <svg class="deco deco-front" viewBox="-46 -14 292 262" aria-hidden="true">
+            <g class="ring">
+              <path transform="rotate(-22 100 100)" d="M-40,100A140,36 0 0 0 240,100"/>
+              <path class="ring-2" transform="rotate(14 100 100)" d="M-14,100A114,23 0 0 0 214,100"/>
+            </g>
+            <g class="sparkles">
+              <use class="pink" href="#sparkle" x="-39" y="-11" width="18" height="18"/>
+              <use class="pink twinkle" href="#sparkle" x="232" y="14" width="8" height="8"/>
+              <use class="light" href="#sparkle" x="-2" y="186" width="7" height="7"/>
+              <use class="pink twinkle t2" href="#sparkle" x="217" y="182" width="11" height="11"/>
+            </g>
+          </svg>
+        </div>
+
+        <svg class="leader" id="leader" aria-hidden="true"><line id="leader-line" x1="0" y1="0" x2="0" y2="0"/></svg>
+
+        <p class="caption" id="caption">
+          <span class="cap-name"><span id="cap-name"></span>, <span class="year" id="cap-year"></span></span>
+          <span class="cap-note" id="cap-note"></span>
+        </p>
+      </div>
+    </div>
+
+    <ul class="counters">
+      <li><p class="num" id="met-number"></p><p class="label" id="met-label"></p></li>
+      <li><p class="num" id="anniversary-number"></p><p class="label" id="anniversary-label"></p></li>
+      <li><p class="num" id="half-number"></p><p class="label" id="half-label"></p></li>
+    </ul>
+  </main>
+
+  <div class="meander" aria-hidden="true"></div>
+</div>
+
+<!-- Each script stands alone: if the globe fails, the counters still work. -->
+<script src="config.js"></script>
+<script src="dates.js"></script>
+<script src="counters.js"></script>
+<script src="sky.js"></script>
+<script src="land.js"></script>
+<script src="globe.js"></script>
+</body>
+</html>
