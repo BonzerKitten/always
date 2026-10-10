@@ -10,8 +10,8 @@
   const TWO_PI = Math.PI * 2;
 
   // The canvas is a little larger than the globe so pins at the edge are not cut off.
-  // These two numbers must match the canvas size in style.css (228 units wide, globe 200 units).
-  const DISC_SHARE = 200 / 228;
+  // These two numbers must match the canvas size in style.css (252 units wide, globe 200 units).
+  const DISC_SHARE = 200 / 252;
 
   const MAX_TILT = 75 * DEG;        // how far the globe may tip towards a pole
   const MAX_EDGE_STEP = 2;          // degrees; long map edges are split so they curve with the globe

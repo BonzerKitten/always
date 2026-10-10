@@ -13,6 +13,8 @@
 }
 
 :root {
+  /* One percent of the visible screen height. dvh follows the browser bars on phones; vh is the fallback. */
+  --vh: 1vh;
   /* Night sky: deep navy, then indigo, then a true dark purple. */
   --sky-top: #050a1f;
   --sky-mid: #0a1236;
@@ -59,6 +61,10 @@ body {
   50% { opacity: var(--hi, 0.9); }
 }
 
+@supports (height: 1dvh) {
+  :root { --vh: 1dvh; }
+}
+
 /* ---------- Page frame ---------- */
 .page {
   position: relative;
@@ -68,10 +74,10 @@ body {
   min-height: 560px;
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
-  gap: clamp(8px, 1.6vh, 20px);
-  padding: clamp(12px, 2vh, 24px) clamp(20px, 3.4vw, 64px);
+  gap: clamp(8px, calc(var(--vh) * 1.6), 20px);
+  padding: clamp(12px, calc(var(--vh) * 2), 24px) clamp(20px, 3.4vw, 64px);
   /* Whole even pixel edges, so the Greek key bands sit exactly on device pixels at a pixel ratio of 1.5, 2 or 3. */
-  padding: round(clamp(12px, 2vh, 24px), 2px) round(clamp(20px, 3.4vw, 64px), 2px);
+  padding: round(clamp(12px, calc(var(--vh) * 2), 24px), 2px) round(clamp(20px, 3.4vw, 64px), 2px);
 }
 
 /* ---------- Greek key band ----------
@@ -99,7 +105,7 @@ body {
 }
 /* Browsers without round(): the whole band is stretched a hair so that it still ends on a whole period. */
 @supports not (width: round(down, 10px, 3px)) {
-  .meander { width: 100%; margin-left: auto; background-repeat: round, no-repeat, no-repeat; }
+  .meander { width: 100%; margin-left: auto; background-repeat: round no-repeat, no-repeat, no-repeat; }
 }
 @media (min-width: 900px) and (min-height: 760px) {
   .meander { --u: 6px; --key: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='26' viewBox='-1 -1 36 26' fill='none' stroke='%23ffe9b0' stroke-width='2' stroke-linejoin='miter' stroke-linecap='butt' shape-rendering='crispEdges'%3E%3Cpath d='M-6 24H0V0H24V12H12V24H42'/%3E%3C/svg%3E"); }
@@ -110,14 +116,14 @@ header { text-align: center; }
 h1 {
   font-family: var(--display);
   font-weight: 400;
-  font-size: clamp(46px, min(10vw, 13.5vh), 160px);
+  font-size: clamp(46px, min(10vw, calc(var(--vh) * 13.5)), 160px);
   letter-spacing: 0.2em;
   margin-right: -0.2em;
   line-height: 1;
   text-shadow: 0 0 30px rgba(255, 244, 214, 0.22);
 }
 .since {
-  margin-top: clamp(6px, 1.2vh, 14px);
+  margin-top: clamp(6px, calc(var(--vh) * 1.2), 14px);
   font-size: clamp(12px, 1.05vw, 15px);
   letter-spacing: 0.6em;
   margin-right: -0.6em;
@@ -137,9 +143,9 @@ main {
   line-height: 1;
   letter-spacing: 0.02em;
 }
-.hero { justify-self: start; align-self: end; padding-bottom: 4vh; }
+.hero { justify-self: start; align-self: end; padding-bottom: calc(var(--vh) * 4); }
 .hero .num {
-  font-size: clamp(64px, min(8.6vw, 12vh), 150px);
+  font-size: clamp(64px, min(8.6vw, calc(var(--vh) * 12)), 150px);
   color: var(--star);
   text-shadow: 0 0 22px var(--star-glow), 0 0 56px rgba(255, 227, 138, 0.24);
 }
@@ -153,9 +159,9 @@ main {
 .hero .sub { font-size: clamp(12px, 1vw, 15px); color: var(--text-soft); letter-spacing: 0.06em; }
 
 .counters { justify-self: end; list-style: none; width: clamp(200px, 20vw, 320px); }
-.counters li { border-top: 1px solid var(--line); padding: clamp(10px, 2.2vh, 22px) 0 clamp(12px, 2.6vh, 26px); }
+.counters li { border-top: 1px solid var(--line); padding: clamp(10px, calc(var(--vh) * 2.2), 22px) 0 clamp(12px, calc(var(--vh) * 2.6), 26px); }
 .counters li:last-child { border-bottom: 1px solid var(--line); }
-.counters .num { font-size: clamp(30px, min(3.4vw, 6vh), 58px); }
+.counters .num { font-size: clamp(30px, min(3.4vw, calc(var(--vh) * 6)), 58px); }
 .counters .label {
   margin-top: 0.5em;
   font-size: clamp(12px, 0.95vw, 14px);
@@ -187,12 +193,12 @@ main {
 }
 .deco { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 
-/* The canvas is the globe disc (200 of 292 units) plus a 14 unit margin for pins. */
+/* The canvas is the globe disc (200 of 292 units) plus a 26 unit margin for pins and their glow. */
 .globe-canvas {
   position: absolute;
-  left: 10.96%;      /* (100 - 114 + 46) / 292 */
-  top: 0;            /* (100 - 114 + 14) / 262 */
-  width: 78.08%;     /* 228 / 292 */
+  left: 6.85%;       /* (46 - 26) / 292 */
+  top: -5.13%;       /* (14 - 26) / 234 */
+  width: 86.3%;      /* 252 / 292 */
   aspect-ratio: 1;
   touch-action: none;
   cursor: grab;
@@ -254,34 +260,34 @@ main {
     height: auto;
     min-height: 100vh;
     min-height: 100dvh;
-    padding: clamp(8px, 1.8vh, 14px) 20px;
-    padding-block: round(clamp(8px, 1.8vh, 14px), 2px);
-    gap: clamp(4px, 1vh, 8px);
+    padding: clamp(8px, calc(var(--vh) * 1.8), 14px) 20px;
+    padding-block: round(clamp(8px, calc(var(--vh) * 1.8), 14px), 2px);
+    gap: clamp(4px, calc(var(--vh) * 1), 8px);
     display: flex;
     flex-direction: column;
   }
-  h1 { font-size: clamp(34px, min(14vw, 6.6vh), 96px); }
-  .since { font-size: clamp(12px, 2vw, 15px); margin-top: clamp(3px, 1.2vh, 14px); }
+  h1 { font-size: clamp(34px, min(14vw, calc(var(--vh) * 6.6)), 96px); }
+  .since { font-size: clamp(12px, 2vw, 15px); margin-top: clamp(3px, calc(var(--vh) * 1.2), 14px); }
   main {
     flex: 1 0 auto;
     min-height: auto;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto 1fr auto;
-    gap: clamp(2px, 0.8vh, 6px);
+    gap: clamp(2px, calc(var(--vh) * 0.8), 6px);
     justify-items: center;
   }
   .hero { justify-self: center; align-self: auto; padding: 0; text-align: center; }
-  .hero .num { font-size: clamp(44px, min(16vw, 7.4vh), 110px); }
+  .hero .num { font-size: clamp(44px, min(16vw, calc(var(--vh) * 7.4)), 110px); }
   .hero .label { font-size: clamp(13px, 2.2vw, 18px); margin-top: 0.3em; }
   .hero .rule { display: none; }
-  .hero .sub { font-size: clamp(12px, 1.9vw, 15px); margin-top: clamp(2px, 0.8vh, 0.5em); }
+  .hero .sub { font-size: clamp(12px, 1.9vw, 15px); margin-top: clamp(2px, calc(var(--vh) * 0.8), 0.5em); }
 
   .globe-slot { width: 100%; height: auto; min-height: auto; align-self: stretch; }
 
   /* The globe area takes the room left over. The first rules are for browsers without container units:
      the globe has a fixed, modest width and the area is exactly as tall as the globe, so nothing can overlap. */
   .stage-box {
-    --fallback-width: min(100vw, 520px, max(260px, calc((100vh - 560px) * 292 / 234)));
+    --fallback-width: min(100vw, 520px, max(260px, calc((calc(var(--vh) * 100) - 560px) * 292 / 234)));
     display: flex;
     flex: 1 1 0;
     min-height: calc(var(--fallback-width) * 234 / 292);
@@ -304,8 +310,8 @@ main {
     grid-template-columns: clamp(84px, 17vw, 140px) 1fr;
     gap: 14px;
     align-items: center;
-    padding: clamp(3px, 1vh, 8px) 0;
+    padding: clamp(3px, calc(var(--vh) * 1), 8px) 0;
   }
-  .counters .num { font-size: clamp(26px, min(max(6vw, 30px), 4.2vh), 48px); }
+  .counters .num { font-size: clamp(26px, min(max(6vw, 30px), calc(var(--vh) * 4.2)), 48px); }
   .counters .label { margin: 0; font-size: clamp(12px, 1.9vw, 15px); line-height: 1.35; }
 }
