@@ -18,6 +18,7 @@
     star.style.left = random() * 100 + '%';
     star.style.top = random() * 100 + '%';
     star.style.width = star.style.height = size + 'px';
+    if (random() < 0.15) star.style.background = random() < 0.5 ? '#ffeec2' : '#ffe08a';   // a few slightly warm stars
     star.style.opacity = (0.3 + random() * 0.5).toFixed(2);
     if (i % 3 === 0) {
       star.className = 'twinkle';

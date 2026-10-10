@@ -13,28 +13,29 @@
 }
 
 :root {
-  --sky-top: #060a1e;
-  --sky-mid: #0b1233;
-  --sky-low: #1b1239;
-  --sky-bottom: #2b1238;
-  --text: #f4ece1;
-  --text-soft: rgba(244, 236, 225, 0.68);
-  --line: rgba(244, 236, 225, 0.28);
-  --pink: #ff86b3;
-  --pink-glow: rgba(255, 134, 179, 0.55);
+  /* Night sky: deep navy, then indigo, then a true dark purple. */
+  --sky-top: #050a1f;
+  --sky-mid: #0a1236;
+  --sky-low: #15133f;
+  --sky-bottom: #1f1445;
+  /* Starlight: warm white, pale cream, and a bright warm yellow for the few things that draw the eye. */
+  --text: #f6f0e3;
+  --text-soft: rgba(246, 240, 227, 0.7);
+  --line: rgba(246, 240, 227, 0.28);
+  --cream: #ffeeba;
+  --star: #ffe38a;
+  --star-glow: rgba(255, 227, 138, 0.5);
 
   --display: 'Poiret One', 'Didot', 'Bodoni MT', Georgia, serif;
   --body: 'Jura', 'Century Gothic', 'Trebuchet MS', sans-serif;
-
-  /* One step of the Greek key band: its line width in pixels. The band is 11 steps tall. */
-  --key: 2px;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; }
 
+html { background: var(--sky-top); }
 body {
-  background: var(--sky-top) linear-gradient(180deg, var(--sky-top) 0%, var(--sky-mid) 42%, var(--sky-low) 78%, var(--sky-bottom) 100%) fixed;
+  background: var(--sky-top);
   color: var(--text);
   font-family: var(--body);
   font-weight: 300;
@@ -42,7 +43,15 @@ body {
 }
 
 /* ---------- Night sky (the stars are added by sky.js) ---------- */
-.sky { position: fixed; inset: 0; pointer-events: none; }
+/* The sky is a layer fixed behind the page, so it covers the whole screen even when the page scrolls
+   (iPhone Safari ignores a fixed background on the body). */
+.sky {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg, var(--sky-top) 0%, var(--sky-mid) 42%, var(--sky-low) 78%, var(--sky-bottom) 100%);
+}
 .sky i { position: absolute; border-radius: 50%; background: #fff; }
 .sky i.twinkle { animation: twinkle var(--dur, 6s) ease-in-out var(--delay, 0s) infinite; }
 @keyframes twinkle {
@@ -53,6 +62,7 @@ body {
 /* ---------- Page frame ---------- */
 .page {
   position: relative;
+  z-index: 1;
   height: 100vh;
   height: 100dvh;
   min-height: 560px;
@@ -60,24 +70,40 @@ body {
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: clamp(8px, 1.6vh, 20px);
   padding: clamp(12px, 2vh, 24px) clamp(20px, 3.4vw, 64px);
+  /* Whole even pixel edges, so the Greek key bands sit exactly on device pixels at a pixel ratio of 1.5, 2 or 3. */
+  padding: round(clamp(12px, 2vh, 24px), 2px) round(clamp(20px, 3.4vw, 64px), 2px);
 }
 
 /* ---------- Greek key band ----------
-   A square meander drawn only with horizontal and vertical lines on a whole-pixel grid.
-   The tile is 12 steps wide and 11 tall; it is scaled so one step is --key pixels.
-   The width is trimmed to whole tiles so the pattern never ends in a cut-off piece. */
+   The classic continuous Greek key: one unbroken line made only of horizontal and vertical strokes.
+   One period is 6 steps wide and 4 steps tall, drawn as  M0,4 V0 H4 V2 H2 V4 H6  (y points down).
+   --u is the size of one step and --s the line width, both in whole pixels (--u is even so it also
+   stays sharp at a pixel ratio of 1.5; every edge falls on an even pixel). The tile is shifted half a line so the vertical stroke is whole.
+   The band is a whole number of periods plus one line width, so it ends on a vertical bar at each end. */
 .meander {
-  height: calc(11 * var(--key));
+  --u: 4px;
+  --s: 2px;
+  --key: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='18' viewBox='-1 -1 24 18' fill='none' stroke='%23ffe9b0' stroke-width='2' stroke-linejoin='miter' stroke-linecap='butt' shape-rendering='crispEdges'%3E%3Cpath d='M-4 16H0V0H16V8H8V16H28'/%3E%3C/svg%3E");
+  --gap: calc(var(--u) - 2px);   /* space between the key and each straight rule */
+  --key-height: calc(4 * var(--u) + var(--s));
+  height: calc(var(--key-height) + 2 * (var(--gap) + var(--s)));
   width: 100%;
-  width: calc(round(down, 100%, 12 * var(--key)) - var(--key));
+  width: calc(round(down, 100% - var(--s), 6 * var(--u)) + var(--s));
   margin-inline: auto;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='11' viewBox='0 0 12 11' fill='none' stroke='%23f4ece1' shape-rendering='crispEdges'%3E%3Cpath d='M0 10.5H.5V.5H10.5V10.5H12M10.5 8.5H4.5V2.5H8.5'/%3E%3C/svg%3E");
-  background-size: calc(12 * var(--key)) calc(11 * var(--key));
-  background-repeat: repeat-x;
-  opacity: 0.62;
+  margin-left: round(down, calc((100% - (round(down, 100% - var(--s), 6 * var(--u)) + var(--s))) / 2), 2px);
+  background:
+    var(--key) left calc(var(--gap) + var(--s)) / auto var(--key-height) repeat-x,
+    linear-gradient(#ffe9b0, #ffe9b0) left top / 100% var(--s) no-repeat,
+    linear-gradient(#ffe9b0, #ffe9b0) left bottom / 100% var(--s) no-repeat;
+  opacity: 0.8;
 }
-@media (min-width: 900px) and (min-height: 760px) { :root { --key: 3px; } }
-@media (min-width: 1600px) and (min-height: 1000px) { :root { --key: 4px; } }
+/* Browsers without round(): the whole band is stretched a hair so that it still ends on a whole period. */
+@supports not (width: round(down, 10px, 3px)) {
+  .meander { width: 100%; margin-left: auto; background-repeat: round, no-repeat, no-repeat; }
+}
+@media (min-width: 900px) and (min-height: 760px) {
+  .meander { --u: 6px; --key: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='26' viewBox='-1 -1 36 26' fill='none' stroke='%23ffe9b0' stroke-width='2' stroke-linejoin='miter' stroke-linecap='butt' shape-rendering='crispEdges'%3E%3Cpath d='M-6 24H0V0H24V12H12V24H42'/%3E%3C/svg%3E"); }
+}
 
 /* ---------- Title ---------- */
 header { text-align: center; }
@@ -88,7 +114,7 @@ h1 {
   letter-spacing: 0.2em;
   margin-right: -0.2em;
   line-height: 1;
-  text-shadow: 0 0 30px rgba(244, 236, 225, 0.22);
+  text-shadow: 0 0 30px rgba(255, 244, 214, 0.22);
 }
 .since {
   margin-top: clamp(6px, 1.2vh, 14px);
@@ -114,8 +140,8 @@ main {
 .hero { justify-self: start; align-self: end; padding-bottom: 4vh; }
 .hero .num {
   font-size: clamp(64px, min(8.6vw, 12vh), 150px);
-  color: var(--pink);
-  text-shadow: 0 0 22px var(--pink-glow), 0 0 56px rgba(255, 134, 179, 0.28);
+  color: var(--star);
+  text-shadow: 0 0 22px var(--star-glow), 0 0 56px rgba(255, 227, 138, 0.24);
 }
 .hero .label {
   margin-top: 0.6em;
@@ -145,7 +171,7 @@ main {
   position: relative;
   min-width: 0;
   min-height: 0;
-  height: min(100%, calc(38vw + 72px));
+  height: min(100%, calc(40vw + 72px));
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -155,7 +181,9 @@ main {
   position: relative;
   flex: none;
   height: calc(100% - 72px);   /* the rest of the slot is the caption */
-  aspect-ratio: 292 / 220;
+  /* 292 x 234 units: the 200 unit disc, orbit rings, and 14 units below the disc so the ring of a pin
+     at the bottom edge never reaches the caption. */
+  aspect-ratio: 292 / 234;
 }
 .deco { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 
@@ -177,14 +205,15 @@ main {
 
 .ring { fill: none; stroke: rgba(244, 236, 225, 0.55); stroke-width: 0.5; filter: drop-shadow(0 0 1.5px rgba(190, 205, 255, 0.6)); }
 .ring .ring-2 { stroke: rgba(244, 236, 225, 0.4); }
-.sparkles .pink { fill: var(--pink); filter: drop-shadow(0 0 3px var(--pink-glow)); }
-.sparkles .light { fill: var(--text); filter: drop-shadow(0 0 2px rgba(244, 236, 225, 0.5)); }
+.sparkles .gold { fill: var(--star); filter: drop-shadow(0 0 3px var(--star-glow)); }
+.sparkles .cream { fill: var(--cream); filter: drop-shadow(0 0 3px rgba(255, 238, 186, 0.45)); }
+.sparkles .light { fill: var(--text); filter: drop-shadow(0 0 2px rgba(246, 240, 227, 0.5)); }
 .sparkles .twinkle { animation: shimmer 5s ease-in-out infinite; }
 .sparkles .t2 { animation-duration: 7s; animation-delay: -2s; }
 @keyframes shimmer { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 
 /* The leader line uses the slot's own pixels as units (set from globe.js). */
-.leader { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; opacity: 0; transition: opacity 0.5s; }
+.leader { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; opacity: 0; transition: opacity 0.22s; }
 .leader line { stroke: rgba(244, 236, 225, 0.3); stroke-width: 0.6; }
 
 .caption {
@@ -194,11 +223,11 @@ main {
   height: 72px;         /* room for the name and a note of up to three lines */
   text-align: center;
   opacity: 0;
-  transition: opacity 0.5s;
+  transition: opacity 0.22s;   /* fading out */
 }
-.caption.visible, .leader.visible { opacity: 1; }
+.caption.visible, .leader.visible { opacity: 1; transition-duration: 0.32s; }   /* fading in */
 .cap-name { display: block; font-size: clamp(12px, 0.95vw, 14px); letter-spacing: 0.14em; }
-.cap-name .year { color: var(--pink); }
+.cap-name .year { color: var(--cream); }
 .cap-note {
   display: -webkit-box;
   -webkit-box-orient: vertical;
@@ -217,44 +246,56 @@ main {
 }
 
 /* ---------- Phones and portrait screens: everything stacked ----------
-   The page is at least one screen tall and grows when the content needs more room
-   (a phone held sideways), so the globe never shrinks below a usable size. */
+   The page is at least one screen tall and grows when the content needs more room (a phone held sideways, or a
+   very short screen), so the globe never shrinks below a usable size. On short screens the title, the big number,
+   the counters and the spacing shrink with the screen height so that everything fits without scrolling. */
 @media (max-width: 760px), (max-aspect-ratio: 1/1) {
-  .page { height: auto; min-height: 100vh; min-height: 100dvh; padding: 14px 20px; gap: 8px; display: flex; flex-direction: column; }
-  h1 { font-size: clamp(40px, 14vw, 96px); }
-  .since { font-size: clamp(12px, 2vw, 15px); }
+  .page {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding: clamp(8px, 1.8vh, 14px) 20px;
+    padding-block: round(clamp(8px, 1.8vh, 14px), 2px);
+    gap: clamp(4px, 1vh, 8px);
+    display: flex;
+    flex-direction: column;
+  }
+  h1 { font-size: clamp(34px, min(14vw, 6.6vh), 96px); }
+  .since { font-size: clamp(12px, 2vw, 15px); margin-top: clamp(3px, 1.2vh, 14px); }
   main {
     flex: 1 0 auto;
     min-height: auto;
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto 1fr auto;
-    gap: 6px;
+    gap: clamp(2px, 0.8vh, 6px);
     justify-items: center;
   }
   .hero { justify-self: center; align-self: auto; padding: 0; text-align: center; }
-  .hero .num { font-size: clamp(56px, 16vw, 110px); }
+  .hero .num { font-size: clamp(44px, min(16vw, 7.4vh), 110px); }
   .hero .label { font-size: clamp(13px, 2.2vw, 18px); margin-top: 0.3em; }
   .hero .rule { display: none; }
-  .hero .sub { font-size: clamp(12px, 1.9vw, 15px); margin-top: 0.5em; }
+  .hero .sub { font-size: clamp(12px, 1.9vw, 15px); margin-top: clamp(2px, 0.8vh, 0.5em); }
 
   .globe-slot { width: 100%; height: auto; min-height: auto; align-self: stretch; }
+
+  /* The globe area takes the room left over. The first rules are for browsers without container units:
+     the globe has a fixed, modest width and the area is exactly as tall as the globe, so nothing can overlap. */
   .stage-box {
+    --fallback-width: min(100vw, 520px, max(260px, calc((100vh - 560px) * 292 / 234)));
     display: flex;
     flex: 1 1 0;
-    min-height: 240px;           /* the smallest globe area: the disc is then about 218 px across */
+    min-height: calc(var(--fallback-width) * 234 / 292);
     width: 100%;
     justify-content: center;
     align-items: center;
-    container-type: size;
   }
-  /* Wider than the text column on purpose: the spare room around the orbit rings lets the globe grow.
-     The first width is for browsers without container units. */
-  .globe {
-    height: auto;
-    width: min(100vw, max(320px, calc((100vh - 470px) * 292 / 220)));
-    width: min(100cqw + 40px, 100cqh * 292 / 220);
+  .globe { height: auto; width: var(--fallback-width); }
+  @supports (width: 1cqw) {
+    .stage-box { min-height: 200px; container-type: size; }   /* the smallest globe area: a disc about 85 px in radius */
+    /* Wider than the text column on purpose: the spare room around the orbit rings lets the globe grow. */
+    .globe { width: min(100cqw + 40px, 100cqh * 292 / 234); }
   }
-  .caption { height: auto; min-height: 40px; margin-top: 4px; }
+  .caption { height: auto; min-height: 40px; margin-top: 2px; }
   .cap-name, .cap-note { font-size: clamp(12px, 1.9vw, 15px); }
 
   .counters { justify-self: stretch; width: auto; }
@@ -263,8 +304,8 @@ main {
     grid-template-columns: clamp(84px, 17vw, 140px) 1fr;
     gap: 14px;
     align-items: center;
-    padding: 8px 0;
+    padding: clamp(3px, 1vh, 8px) 0;
   }
-  .counters .num { font-size: clamp(30px, 6vw, 48px); }
+  .counters .num { font-size: clamp(26px, min(max(6vw, 30px), 4.2vh), 48px); }
   .counters .label { margin: 0; font-size: clamp(12px, 1.9vw, 15px); line-height: 1.35; }
 }
