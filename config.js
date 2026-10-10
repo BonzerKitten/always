@@ -92,6 +92,10 @@ const SITE = {
       'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
     ],
     monthAndYear: '{mês} de {ano}',
+
+    // Several places close together are drawn as one pin, with the number of places beside it. {n} is that number.
+    // The first line is shown under the globe when the group is selected; the second line asks to zoom in.
+    group: { one: '{n} lugar', other: '{n} lugares', hint: 'Aproxime para ver cada um' },
   },
 
   // The point of the globe that faces the screen when the page opens.

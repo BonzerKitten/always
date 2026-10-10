@@ -38,10 +38,22 @@
   const GRID_SHOW_FROM = 0.1;       // a finer grid fades in when its lines are this far apart (share of the lens width) ...
   const GRID_SHOW_TO = 0.18;        // ... and is fully there at this spacing
 
+  // Grouping. Two places are shown as one group while their pins are closer than the merge distance, and apart again
+  // once they are farther than the split distance (the gap between the two keeps a group from flickering at the edge).
+  // A pin is about 33 px wide on a big screen and 12 px on a phone, and a fingertip needs about 48 px.
+  const GROUP_MERGE_PX = 40;
+  const GROUP_SPLIT_PX = 48;
+  const GROUP_PIN_SCALE = 1.3;      // a group's pin is a little larger than a single one
+  const GROUP_EASE_MS = 380;        // how long a group takes to form or to fall apart
+  const GROUP_SPREAD = 0.6;         // tapping a group zooms until its places spread over this share of the lens radius
+  const FLY_MIN_MS = 550;           // a tap on a group flies the view there; short hops take this long ...
+  const FLY_EXTRA_MS = 450;         // ... and a trip half way round the globe this much more
+
   // The window onto the planet when zoomed in.
   const FEATHER_SHARE = 0.22;       // width of the soft edge, as a share of the lens radius
   const FEATHER_ZOOM_SPAN = 0.6;    // the soft edge grows from nothing over this much zoom after the minimum
   const RING_FADE_ZOOM_SPAN = 0.4;  // the orbit rings fade out over this much zoom after the minimum
+  const HALO_FADE = 0.6;            // the halo around the globe loses this share of its strength
 
   // Coastline detail: the fine land fades in between these zoom levels, once it has loaded.
   const DETAIL_ZOOM_FROM = 2;
@@ -213,16 +225,66 @@
   }
   growScratch(coarseRings);
 
-  const places = SITE.places.map((place) => ({
-    place,
-    vector: toVector(place.lon, place.lat),
-    view: [0, 0, 0],
-    // Filled in on every draw: where the pin is on the canvas and how much it faces us.
-    x: 0,
-    y: 0,
-    z: 0,
-    level: 0,   // 0 = ordinary pin, 1 = fully active (eases between the two)
-  }));
+  /*
+   * The things a pin can stand for: each place, and each group of places that can be drawn as one pin.
+   * The groups come from joining the two closest places first, then the closest of what is left, and so on
+   * ("single linkage"). A group's height is the distance at which it falls apart again. Each node knows its
+   * children and its parent, so zooming can split a group into its two parts and zooming out can join them again.
+   * The places come first in the list (leaves), then the groups; a group always comes after its children.
+   */
+  function makeNode(members, vector) {
+    return {
+      members,            // the places inside (indexes into SITE.places)
+      vector,             // the middle of those places, as a unit vector
+      place: members.length === 1 ? SITE.places[members[0]] : null,
+      children: null,     // for a group: the two nodes it was joined from
+      parent: -1,
+      height: 0,          // for a group: the angle (radians) between its two parts
+      view: [0, 0, 0],
+      // Filled in on every draw: where the pin is on the canvas and how much it faces us.
+      x: 0,
+      y: 0,
+      z: 0,
+      ownX: 0,            // the pin's true position, while x and y may still be sliding towards a group
+      ownY: 0,
+      merged: false,      // a group is drawn as one pin
+      form: 1,            // how formed the node is (0 to 1): easing in and out when groups join and fall apart
+      weight: 1,          // how much of the node is shown: its own form, less the form of the group it belongs to
+      level: 0,           // 0 = ordinary pin, 1 = fully active (eases between the two)
+    };
+  }
+
+  function buildNodes() {
+    const list = SITE.places.map((place, index) => makeNode([index], toVector(place.lon, place.lat)));
+    const leafCount = list.length;
+    const pairs = [];
+    for (let i = 0; i < leafCount; i++) {
+      for (let j = i + 1; j < leafCount; j++) {
+        const a = list[i].vector, b = list[j].vector;
+        pairs.push([Math.acos(clamp(a[0] * b[0] + a[1] * b[1] + a[2] * b[2], -1, 1)), i, j]);
+      }
+    }
+    pairs.sort((p, q) => p[0] - q[0]);
+    const topOf = list.map((_, index) => index);   // for each place: the node it is currently part of
+    for (const [angle, i, j] of pairs) {
+      const first = topOf[i], second = topOf[j];
+      if (first === second) continue;
+      const members = list[first].members.concat(list[second].members);
+      const sum = [0, 0, 0];
+      for (const member of members) for (let k = 0; k < 3; k++) sum[k] += list[member].vector[k];
+      const length = Math.hypot(...sum);
+      const node = makeNode(members, sum.map((value) => value / length));
+      node.children = [first, second];
+      node.height = angle;
+      list[first].parent = list[second].parent = list.length;
+      for (const member of members) topOf[member] = list.length;
+      list.push(node);
+    }
+    return list;
+  }
+
+  const nodes = buildNodes();
+  const leafCount = SITE.places.length;
 
   // ---------- View state ----------
 
@@ -241,6 +303,8 @@
   let animating = false;     // something is still moving, so the next frame is needed
   let viewChanged = true;    // the view moved since the active place was last chosen
   let lastFrameTime = 0;
+  let groupsSettled = false;
+  let groupsChanged = false; // a group formed or fell apart (a little) since the active pin was last chosen
 
   function planetRadius() { return lensRadius * zoom; }
 
@@ -272,15 +336,21 @@
     out[2] = z * sinLat + towardsCenterMeridian * cosLat;
   }
 
-  // The point of the Earth (a unit vector) that is seen "right" and "up" pixels from the middle of the canvas.
-  function earthAt(right, up, radius) {
+  // The view position (right, up, towards the viewer; a unit vector) of the spot of a planet of this radius that is seen
+  // "right" and "up" pixels from the middle of the canvas. Beyond the planet's edge it is the nearest point on the edge.
+  function spotInView(right, up, radius) {
     let east = right / radius, north = up / radius;
     const reach = Math.hypot(east, north);
-    if (reach > 0.9999) {   // beyond the planet's edge: the nearest point on the edge
+    if (reach > 0.9999) {
       east *= 0.9999 / reach;
       north *= 0.9999 / reach;
     }
-    const toward = Math.sqrt(1 - east * east - north * north);
+    return [east, north, Math.sqrt(1 - east * east - north * north)];
+  }
+
+  // The point of the Earth (a unit vector) that is seen "right" and "up" pixels from the middle of the canvas.
+  function earthAt(right, up, radius) {
+    const [east, north, toward] = spotInView(right, up, radius);
     const towardsCenterMeridian = -north * sinLat + toward * cosLat;
     return [
       towardsCenterMeridian * cosLon - east * sinLon,
@@ -291,13 +361,7 @@
 
   // Turns the globe so that the point of the Earth (a unit vector) is seen "right" and "up" pixels from the middle of the canvas.
   function turnPointTo(point, right, up, radius) {
-    let east = right / radius, north = up / radius;
-    const reach = Math.hypot(east, north);
-    if (reach > 0.9999) {
-      east *= 0.9999 / reach;
-      north *= 0.9999 / reach;
-    }
-    const toward = Math.sqrt(1 - east * east - north * north);
+    const [east, north, toward] = spotInView(right, up, radius);
     const pointLat = Math.asin(clamp(point[2], -1, 1));
     const acrossLon = Math.asin(clamp(east / Math.max(Math.cos(pointLat), 1e-9), -1, 1));   // how far east of the middle the point lies
     const towardsCenterMeridian = Math.cos(pointLat) * Math.cos(acrossLon);
@@ -333,12 +397,15 @@
   }
 
   // The orbit rings around the globe belong to the whole planet: they fade out as the visitor zooms in.
-  let ringOpacity = 1;
-  function updateRings() {
-    const opacity = 1 - smoothRange(zoom, 1, 1 + RING_FADE_ZOOM_SPAN);
-    if (opacity === ringOpacity) return;
-    ringOpacity = opacity;
-    globeBox.style.setProperty('--ring-opacity', opacity.toFixed(3));
+  // The halo around the globe stays, but softer, so it does not outline the lens.
+  let decorationShown = '1/1';
+  function updateDecoration() {
+    const rings = (1 - smoothRange(zoom, 1, 1 + RING_FADE_ZOOM_SPAN)).toFixed(3);
+    const halo = (1 - HALO_FADE * featherAmount()).toFixed(3);
+    if (rings + '/' + halo === decorationShown) return;
+    decorationShown = rings + '/' + halo;
+    globeBox.style.setProperty('--ring-opacity', rings);
+    globeBox.style.setProperty('--halo-opacity', halo);
   }
 
   // ---------- Cutting lines at the edge of the globe ----------
@@ -733,28 +800,60 @@
   function pinSize() { return Math.max(6, lensRadius * 0.055); }
   function activePinSize() { return Math.max(10, lensRadius * 0.095); }
   function activeRingRadius() { return Math.max(15, lensRadius * 0.125); }
+  function countSize() { return Math.max(13, Math.round(lensRadius * 0.06)); }
 
-  function projectPins() {
-    for (const pin of places) {
-      turnPoint(pin.vector[0], pin.vector[1], pin.vector[2], pin.view);
-      pin.x = side / 2 + planetRadius() * pin.view[0];
-      pin.y = side / 2 - planetRadius() * pin.view[1];
-      pin.z = pin.view[2];
+  // Groups join (or fall apart) when the gap between their two parts, as drawn, crosses the merge or split distance.
+  // The two distances differ, so a gap hovering around one of them does not make the group flicker.
+  function updateMerges() {
+    for (let i = leafCount; i < nodes.length; i++) {
+      const node = nodes[i];
+      const gap = node.height * planetRadius();
+      if (!node.merged && gap < GROUP_MERGE_PX) node.merged = true;
+      else if (node.merged && gap > GROUP_SPLIT_PX) node.merged = false;
+    }
+    for (let i = nodes.length - 1; i >= leafCount; i--) {   // inside a joined group, every smaller group is joined too
+      if (!nodes[i].merged) continue;
+      for (const child of nodes[i].children) nodes[child].merged = true;
     }
   }
 
-  // Moves every pin's level towards 1 (the active pin) or 0 (the others). Returns true while anything is still moving.
-  function stepLevels(step) {
+  // Works out where every node's pin is drawn and how much of it shows. A group that is forming draws its parts
+  // sliding towards each other while they fade into the group's own pin.
+  function projectPins() {
+    const centre = side / 2;
+    nodes.forEach((node) => {
+      turnPoint(node.vector[0], node.vector[1], node.vector[2], node.view);
+      node.ownX = centre + planetRadius() * node.view[0];
+      node.ownY = centre - planetRadius() * node.view[1];
+      node.z = node.view[2];
+    });
+    for (let i = nodes.length - 1; i >= 0; i--) {   // groups before the parts they hold
+      const node = nodes[i];
+      const group = nodes[node.parent];
+      const joined = group ? smooth(group.form) : 0;
+      node.x = group ? node.ownX + (group.x - node.ownX) * joined : node.ownX;
+      node.y = group ? node.ownY + (group.y - node.ownY) * joined : node.ownY;
+      node.weight = smooth(node.form) * (1 - joined);
+    }
+  }
+
+  // Moves every node's level towards 1 (the active node) or 0 (the others), and every group's form towards
+  // 1 (joined) or 0 (apart). Returns true while anything is still moving.
+  function stepNodes(step) {
     let moving = false;
-    places.forEach((pin, index) => {
-      const target = index === activeIndex ? 1 : 0;
-      if (pin.level === target) return;
-      if (reducedMotion.matches) {
-        pin.level = target;
-        return;
-      }
-      pin.level = target > pin.level ? Math.min(target, pin.level + step) : Math.max(target, pin.level - step);
-      if (pin.level !== target) moving = true;
+    const approach = (value, target, amount) => {
+      if (value === target) return value;
+      if (reducedMotion.matches) return target;
+      const next = target > value ? Math.min(target, value + amount) : Math.max(target, value - amount);
+      if (next !== target) moving = true;
+      return next;
+    };
+    nodes.forEach((node, index) => {
+      node.level = approach(node.level, index === activeIndex ? 1 : 0, step);
+      if (index < leafCount) return;
+      const before = node.form;
+      node.form = approach(node.form, node.merged ? 1 : 0, step * EASE_MS / GROUP_EASE_MS);
+      if (node.form !== before) groupsChanged = true;
     });
     return moving;
   }
@@ -762,25 +861,41 @@
   function drawPins() {
     ctx.shadowColor = PIN_GLOW;
     ctx.shadowBlur = 9 * pixelRatio;
-    places.forEach((pin) => {
-      if (pin.z <= PIN_MIN_Z) return;
-      const grow = smooth(pin.level);
-      ctx.globalAlpha = Math.min(1, (pin.z - PIN_MIN_Z) * 6);
+    nodes.forEach((node) => {
+      if (node.z <= PIN_MIN_Z || node.weight <= 0.002) return;
+      const grow = smooth(node.level);
+      const isGroup = node.children !== null;
+      const shown = node.weight;
+      const scale = (0.7 + 0.3 * shown) * (isGroup ? GROUP_PIN_SCALE : 1);
+      const size = (pinSize() + (activePinSize() - pinSize()) * grow) * scale;
+      ctx.globalAlpha = Math.min(1, (node.z - PIN_MIN_Z) * 6) * shown;
       ctx.fillStyle = PIN_COLOR;
-      sparklePath(pin.x, pin.y, pinSize() + (activePinSize() - pinSize()) * grow);
+      sparklePath(node.x, node.y, size);
       ctx.fill();
+      if (isGroup) drawCount(node, size + (activeRingRadius() * (0.7 + 0.3 * grow) - size) * grow);
       if (grow > 0) {
         ctx.globalAlpha *= grow;
         ctx.strokeStyle = 'rgba(' + RING_COLOR + ', 0.85)';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.arc(pin.x, pin.y, activeRingRadius() * (0.7 + 0.3 * grow), 0, TWO_PI);
+        ctx.arc(node.x, node.y, activeRingRadius() * (0.7 + 0.3 * grow), 0, TWO_PI);
         ctx.stroke();
       }
     });
     ctx.globalAlpha = 1;
     ctx.shadowBlur = 0;
     ctx.shadowColor = 'transparent';
+  }
+
+  // The number of places in a group, to the right of its pin (and of its ring, once it is the active one).
+  function drawCount(node, reach) {
+    ctx.save();
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#ffeeba';
+    ctx.font = '300 ' + countSize() + 'px Jura, "Century Gothic", "Trebuchet MS", sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(node.members.length), node.x + reach + 4, node.y + 0.5);
+    ctx.restore();
   }
 
   function draw() {
@@ -793,19 +908,24 @@
 
     let moving = stepCamera(animating ? elapsed : 16);
     updateCone();
+    updateMerges();
+    if (!groupsSettled) {   // the first picture starts with the groups already formed, not forming
+      groupsSettled = true;
+      for (const node of nodes) if (node.children) node.form = node.merged ? 1 : 0;
+    }
+    moving = stepNodes(elapsed / EASE_MS) || moving;
     projectPins();
-    if (viewChanged) {
-      viewChanged = false;
+    if ((viewChanged || groupsChanged) && !flight) {
+      viewChanged = groupsChanged = false;
       pickActiveFromView();
     }
-    moving = stepLevels(elapsed / EASE_MS) || moving;
     if (detail.state === 'ready' && detail.fade < 1) {
       detail.fade = reducedMotion.matches ? 1 : Math.min(1, detail.fade + elapsed / DETAIL_FADE_MS);
       moving = true;
     }
     animating = moving;
 
-    updateRings();
+    updateDecoration();
     ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
     ctx.clearRect(0, 0, side, side);
     drawSphere(centre);
@@ -867,9 +987,9 @@
   // The deepest zoom: deep enough to pull the two closest places apart, but never beyond a sensible limit.
   function zoomLimit() {
     let closest = Infinity;
-    for (let i = 0; i < places.length; i++) {
-      for (let j = i + 1; j < places.length; j++) {
-        const a = places[i].vector, b = places[j].vector;
+    for (let i = 0; i < leafCount; i++) {
+      for (let j = i + 1; j < leafCount; j++) {
+        const a = nodes[i].vector, b = nodes[j].vector;
         const apart = Math.acos(clamp(a[0] * b[0] + a[1] * b[1] + a[2] * b[2], -1, 1));
         if (apart > 1e-6) closest = Math.min(closest, apart);   // places on the very same spot cannot be pulled apart
       }
@@ -877,8 +997,57 @@
     return clamp(SEPARATE_AT_MAX_PX / (closest * lensRadius), ZOOM_FLOOR, ZOOM_CAP);
   }
 
-  // Moves the camera for one frame (a wheel zoom gliding to its goal). Returns true while it is still moving.
+  /*
+   * Tapping a group turns and zooms the globe to it, so that the places it holds spread out over the lens: far
+   * enough in for them to span GROUP_SPREAD of the lens, and at least far enough for the group to fall apart.
+   * The camera glides there (a "flight"), and the active pin is chosen again when it lands.
+   */
+  let flight = null;
+  function flyToGroup(group) {
+    const [x, y, z] = group.vector;
+    let reach = 0;
+    for (const member of group.members) {
+      const v = nodes[member].vector;
+      reach = Math.max(reach, Math.acos(clamp(x * v[0] + y * v[1] + z * v[2], -1, 1)));
+    }
+    const spreadZoom = GROUP_SPREAD / Math.max(Math.sin(reach), 1e-9);
+    const splitZoom = (GROUP_SPLIT_PX * 1.1) / Math.max(group.height * lensRadius, 1e-9);
+    const goal = clamp(Math.max(spreadZoom, splitZoom), zoom, zoomMax);
+    const lon = Math.atan2(y, x);
+    const lat = Math.asin(clamp(z, -1, 1));
+    const turn = Math.acos(clamp(cosLat * cosLon * x + cosLat * sinLon * y + sinLat * z, -1, 1));
+    requestDetail();
+    stopInertia();
+    anchor = null;
+    zoomGoal = goal;
+    if (reducedMotion.matches) {
+      setCenter(lon, lat);
+      setZoom(goal);
+      return;
+    }
+    flight = {
+      fromLon: centerLon,
+      lonTurn: ((lon - centerLon + Math.PI * 3) % TWO_PI) - Math.PI,   // the short way round
+      fromLat: centerLat,
+      toLat: lat,
+      fromZoom: zoom,
+      goal,
+      time: 0,
+      duration: FLY_MIN_MS + FLY_EXTRA_MS * Math.min(1, turn / (Math.PI / 2)),
+    };
+  }
+
+  // Moves the camera for one frame (a flight, or a wheel zoom gliding to its goal). Returns true while it is still moving.
   function stepCamera(elapsed) {
+    if (flight) {
+      flight.time += elapsed;
+      const done = Math.min(1, flight.time / flight.duration);
+      const along = smooth(done);
+      setCenter(flight.fromLon + flight.lonTurn * along, flight.fromLat + (flight.toLat - flight.fromLat) * along);
+      setZoom(flight.fromZoom * Math.pow(flight.goal / flight.fromZoom, along));
+      if (done === 1) flight = null;
+      return flight !== null;
+    }
     if (zoom === zoomGoal) return false;
     const gap = Math.log(zoomGoal / zoom);
     if (reducedMotion.matches || Math.abs(gap) < 0.002) {
@@ -896,6 +1065,7 @@
   const captionName = document.getElementById('cap-name');
   const captionYear = document.getElementById('cap-year');
   const captionNote = document.getElementById('cap-note');
+  const captionWhen = document.getElementById('cap-when');
 
   // The place whose text is on the caption (and where the leader line points). It follows the active place
   // after the caption has faded out, so the text never snaps while it can be seen.
@@ -910,11 +1080,16 @@
     return texts.monthAndYear.replace('{mês}', texts.months[place.month - 1]).replace('{ano}', place.year);
   }
 
+  // A place shows its name, date and note. A group says how many places it holds and asks the visitor to zoom in.
   function showCaption(index) {
-    const place = places[index].place;
-    captionName.textContent = place.name;
-    captionYear.textContent = describeDate(place);
-    captionNote.textContent = place.note || '';
+    const node = nodes[index];
+    const place = node.place;
+    const texts = SITE.placeTexts.group;
+    const count = node.members.length;
+    captionName.textContent = place ? place.name : pluralWord(count, texts.one, texts.other).replace('{n}', count);
+    captionWhen.hidden = !place;
+    captionYear.textContent = place ? describeDate(place) : '';
+    captionNote.textContent = place ? place.note || '' : texts.hint;
     shownIndex = index;
     projectPins();
     updateLeader();
@@ -957,9 +1132,9 @@
     requestDraw();
   }
 
-  // A pin counts as visible when it faces us and is not hidden by the soft edge of the lens.
+  // A pin counts as visible when it faces us, is at least "minimum" formed (see the groups) and is not hidden by the lens edge.
   function pinShown(pin, minimum) {
-    return pin.z > PIN_MIN_Z && lensVisibility(pin.x, pin.y) >= minimum;
+    return pin.z > PIN_MIN_Z && pin.weight >= minimum && lensVisibility(pin.x, pin.y) >= minimum;
   }
 
   // The visible pin nearest the middle of the lens. The current place only gives way to another pin that is
@@ -968,20 +1143,21 @@
     const centre = side / 2;
     const away = (pin) => Math.hypot(pin.x - centre, pin.y - centre);
     let best = -1;
-    places.forEach((pin, index) => {
-      if (pinShown(pin, 0.35) && (best === -1 || away(pin) < away(places[best]))) best = index;
+    nodes.forEach((pin, index) => {
+      if (pinShown(pin, 0.5) && (best === -1 || away(pin) < away(nodes[best]))) best = index;
     });
-    const current = places[activeIndex];
-    if (best !== -1 && current && pinShown(current, 0.1)) {
-      if (away(places[best]) > away(current) - SWITCH_MARGIN * lensRadius) best = activeIndex;
+    const current = nodes[activeIndex];
+    if (best !== -1 && current && pinShown(current, 0.15)) {
+      if (away(nodes[best]) > away(current) - SWITCH_MARGIN * lensRadius) best = activeIndex;
     }
     setActive(best);
   }
 
   // Draws the thin line from the active pin down to the caption.
   function updateLeader() {
-    const pin = places[shownIndex];
+    const pin = nodes[shownIndex];
     if (!pin || pin.z <= PIN_MIN_Z) return;   // the leader is fading out with the caption; leave it where it was
+    leader.classList.toggle('hidden-pin', !pinShown(pin, 0.1));   // the pin is out of the lens or inside a group: no line to it
     // All positions are in pixels from the top left of the slot, which is what the leader's svg uses.
     const slotBox = slot.getBoundingClientRect();
     const canvasBox = canvas.getBoundingClientRect();
@@ -1025,8 +1201,8 @@
   function pinNear(x, y, reach) {
     let best = -1;
     let bestDistance = reach;
-    places.forEach((pin, index) => {
-      if (!pinShown(pin, 0.35)) return;
+    nodes.forEach((pin, index) => {
+      if (!pinShown(pin, 0.5)) return;
       const distance = Math.hypot(pin.x - x, pin.y - y);
       if (distance <= bestDistance) {
         best = index;
@@ -1091,8 +1267,9 @@
     canvas.setPointerCapture(event.pointerId);
     touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
     stopInertia();
-    zoomGoal = zoom;   // a gesture takes over from a wheel zoom still gliding
+    zoomGoal = zoom;   // a gesture takes over from a wheel zoom or a flight still going
     anchor = null;
+    flight = null;
     if (touches.size === 1) {
       wasPinched = false;
       startDrag(event.pointerId, event.clientX, event.clientY, event.timeStamp);
@@ -1166,6 +1343,7 @@
       const tapped = pinNear(x, y, event.pointerType === 'touch' ? 28 : 18);
       if (tapped !== -1) {
         setActive(tapped);
+        if (nodes[tapped].children) flyToGroup(nodes[tapped]);
         requestDraw();
       }
       return;
@@ -1186,6 +1364,7 @@
     if (goal === zoomGoal) return;
     if (goal > 1) requestDetail();
     stopInertia();
+    flight = null;
     zoomGoal = goal;
     const [x, y] = localPoint(event);
     anchor = grab(x, y);
@@ -1213,8 +1392,12 @@
   function relayout() {
     if (side === 0) return;
     const box = canvas.getBoundingClientRect();
-    if (box.width !== side) resize();
-    else updateLeader();
+    if (box.width !== side) {
+      resize();
+    } else {
+      updateLeader();
+      requestDraw();   // the count on a group is drawn in the page's label font, which may only just have arrived
+    }
   }
 
   new ResizeObserver(resize).observe(globeBox);

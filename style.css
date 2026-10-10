@@ -236,7 +236,8 @@ main {
 .globe-canvas.dragging { cursor: grabbing; }
 .globe-canvas.on-pin { cursor: pointer; }
 
-/* The rings fade out while the visitor zooms in (globe.js sets --ring-opacity). */
+/* The rings fade out and the halo softens while the visitor zooms in (globe.js sets --ring-opacity and --halo-opacity). */
+.halo { opacity: var(--halo-opacity, 1); }
 .ring { fill: none; stroke: rgba(244, 236, 225, 0.55); stroke-width: 0.5; filter: drop-shadow(0 0 1.5px rgba(190, 205, 255, 0.6)); opacity: var(--ring-opacity, 1); }
 .ring .ring-2 { stroke: rgba(244, 236, 225, 0.4); }
 /* The four-pointed sparkles around the globe: each is a small layer that pulses in size and brightness. */
@@ -270,6 +271,7 @@ main {
   transition: opacity 0.22s;   /* fading out */
 }
 .caption.visible, .leader.visible { opacity: 1; transition-duration: 0.32s; }   /* fading in */
+.leader.visible.hidden-pin { opacity: 0; }
 .cap-name { display: block; font-size: clamp(12px, 0.95vw, 14px); letter-spacing: 0.14em; }
 .cap-name .year { color: var(--cream); }
 .cap-note {
