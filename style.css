@@ -28,6 +28,14 @@
   --star: #ffe38a;
   --star-glow: rgba(255, 227, 138, 0.5);
 
+  /* ---- Tuning the moving sky (everything animated on the page is set here) ---- */
+  --sky-drift-time: 420s;      /* how long the stars take to cross the screen once (bigger = slower) */
+  --star-twinkle-time: 7s;     /* length of one brightness cycle of a star group (each group varies by about 40%) */
+  --star-twinkle-low: 0.5;     /* the dimmest a star gets, as a share of its usual brightness (1 = no twinkle) */
+  --spark-pulse: 0.06;         /* the four-pointed sparkles grow and shrink by this much (0.06 = 6%) */
+  --spark-time: 3.4s;          /* length of one pulse of a sparkle */
+  --spark-dim: 0.82;           /* the dimmest a sparkle gets while it pulses (1 = no brightness change) */
+
   --display: 'Poiret One', 'Didot', 'Bodoni MT', Georgia, serif;
   --body: 'Jura', 'Century Gothic', 'Trebuchet MS', sans-serif;
 }
@@ -54,12 +62,24 @@ body {
   pointer-events: none;
   background: linear-gradient(180deg, var(--sky-top) 0%, var(--sky-mid) 42%, var(--sky-low) 78%, var(--sky-bottom) 100%);
 }
-.sky i { position: absolute; border-radius: 50%; background: #fff; }
-.sky i.twinkle { animation: twinkle var(--dur, 6s) ease-in-out var(--delay, 0s) infinite; }
-@keyframes twinkle {
-  0%, 100% { opacity: var(--lo, 0.25); }
-  50% { opacity: var(--hi, 0.9); }
+.sky { overflow: hidden; }
+/* The stars are in a few groups. Each group is one layer, twice as wide as the screen and holding its stars twice,
+   so sliding it left by half its width puts the second copy exactly where the first one started: no jump, no seam.
+   Only transform (drift) and opacity (twinkle) are animated, so the browser does it without redrawing. */
+.star-group {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 200%;
+  height: 100%;
+  will-change: transform, opacity;
+  animation:
+    star-drift calc(var(--sky-drift-time) * var(--dk, 1)) linear calc(var(--sky-drift-time) * var(--dk, 1) * var(--dp, 0) * -1) infinite,
+    star-twinkle calc(var(--star-twinkle-time) * var(--tk, 1)) ease-in-out calc(var(--star-twinkle-time) * var(--tk, 1) * var(--tp, 0) * -1) infinite;
 }
+.sky i { position: absolute; border-radius: 50%; background: #fff; }
+@keyframes star-drift { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(-50%, 0, 0); } }
+@keyframes star-twinkle { 0%, 100% { opacity: 1; } 50% { opacity: var(--star-twinkle-low); } }
 
 @supports (height: 1dvh) {
   :root { --vh: 1dvh; }
@@ -67,6 +87,7 @@ body {
 
 /* ---------- Page frame ---------- */
 .page {
+  --pad-x: clamp(20px, 3.4vw, 64px);   /* --pad-y (set with --cell) is the distance of the bands from the top and bottom of the screen */
   position: relative;
   z-index: 1;
   height: 100vh;
@@ -75,41 +96,43 @@ body {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: clamp(8px, calc(var(--vh) * 1.6), 20px);
-  padding: clamp(12px, calc(var(--vh) * 2), 24px) clamp(20px, 3.4vw, 64px);
-  /* Whole even pixel edges, so the Greek key bands sit exactly on device pixels at a pixel ratio of 1.5, 2 or 3. */
-  padding: round(clamp(12px, calc(var(--vh) * 2), 24px), 2px) round(clamp(20px, 3.4vw, 64px), 2px);
+  padding: var(--pad-y) var(--pad-x);
 }
 
 /* ---------- Greek key band ----------
-   The classic continuous Greek key: one unbroken line made only of horizontal and vertical strokes.
-   One period is 6 steps wide and 4 steps tall, drawn as  M0,4 V0 H4 V2 H2 V4 H6  (y points down).
-   --u is the size of one step and --s the line width, both in whole pixels (--u is even so it also
-   stays sharp at a pixel ratio of 1.5; every edge falls on an even pixel). The tile is shifted half a line so the vertical stroke is whole.
-   The band is a whole number of periods plus one line width, so it ends on a vertical bar at each end. */
+   Drawn on a grid of square cells, --cell CSS pixels each. Every line and every gap is one cell.
+   The pattern repeats every 14 cells (the tile holds three repeats, 42 cells, so its width is a whole number of pixels even at a pixel ratio of 3). It is 10 cells tall: a solid rule, an empty row, the key (6 cells tall, 13 wide, then one
+   empty column), an empty row and a solid rule. The tile repeats across the whole width of the screen, edge to edge,
+   centred on a point where the key mirrors itself, so the cut at the left and right edges is the same.
+   --cell is chosen so one cell is a whole number of device pixels (2 px at ratio 1, 1.5 px at 2, 5/3 px at 3),
+   which keeps every edge sharp. Change --cell below to make the whole band larger or smaller. */
+:root { --band-img: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 42 10' preserveAspectRatio='none' fill='none' stroke='%23ffe9b0' shape-rendering='crispEdges'%3E%3Cpath d='M0 .5H42M0 9.5H42'/%3E%3Cpath transform='translate(0.5 2.5)' stroke-linecap='square' stroke-linejoin='miter' d='M2 3V2H4V5H0V0H6V5H12V0H8V3H10V2'/%3E%3Cpath transform='translate(14.5 2.5)' stroke-linecap='square' stroke-linejoin='miter' d='M2 3V2H4V5H0V0H6V5H12V0H8V3H10V2'/%3E%3Cpath transform='translate(28.5 2.5)' stroke-linecap='square' stroke-linejoin='miter' d='M2 3V2H4V5H0V0H6V5H12V0H8V3H10V2'/%3E%3C/svg%3E"); --tile-h: calc(10 * var(--cell)); --cell: 2px; --dev: 1px; --band-h: calc(10 * var(--cell)); --pad-y: var(--band-h); }   /* --dev is one device pixel, used to put the band on whole device pixels */
+@media (min-resolution: 1.4dppx) and (max-resolution: 1.6dppx) { :root { --dev: calc(2px / 3); } }
+@media (min-resolution: 1.9dppx) and (max-resolution: 2.1dppx) { :root { --dev: 0.5px; } }
+@media (min-resolution: 2.9dppx) { :root { --dev: calc(1px / 3); } }
+@media (min-resolution: 1.2dppx) and (max-resolution: 1.3dppx) { :root { --cell: 1.6px; --dev: 0.8px; } }
+@media (max-width: 760px) and (min-resolution: 1.75dppx), (max-aspect-ratio: 1/1) and (min-resolution: 1.75dppx) { :root { --cell: 1.5px; } }
+@media (max-width: 760px) and (min-resolution: 2.5dppx), (max-aspect-ratio: 1/1) and (min-resolution: 2.5dppx) {
+  :root {
+    /* 5 device pixels at ratio 3. The tile is 17 px (51 device pixels) tall so its size is a whole number of device
+       pixels; the picture is 10.2 cells tall, the last fifth of a cell is empty. */
+    --cell: calc(5px / 3); --band-h: 17px; --tile-h: 17px;
+    --band-img: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 42 10.2' preserveAspectRatio='none' fill='none' stroke='%23ffe9b0' shape-rendering='crispEdges'%3E%3Cpath d='M0 .5H42M0 9.5H42'/%3E%3Cpath transform='translate(0.5 2.5)' stroke-linecap='square' stroke-linejoin='miter' d='M2 3V2H4V5H0V0H6V5H12V0H8V3H10V2'/%3E%3Cpath transform='translate(14.5 2.5)' stroke-linecap='square' stroke-linejoin='miter' d='M2 3V2H4V5H0V0H6V5H12V0H8V3H10V2'/%3E%3Cpath transform='translate(28.5 2.5)' stroke-linecap='square' stroke-linejoin='miter' d='M2 3V2H4V5H0V0H6V5H12V0H8V3H10V2'/%3E%3C/svg%3E");
+  }
+}
+
 .meander {
-  --u: 4px;
-  --s: 2px;
-  --key: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='18' viewBox='-1 -1 24 18' fill='none' stroke='%23ffe9b0' stroke-width='2' stroke-linejoin='miter' stroke-linecap='butt' shape-rendering='crispEdges'%3E%3Cpath d='M-4 16H0V0H16V8H8V16H28'/%3E%3C/svg%3E");
-  --gap: calc(var(--u) - 2px);   /* space between the key and each straight rule */
-  --key-height: calc(4 * var(--u) + var(--s));
-  height: calc(var(--key-height) + 2 * (var(--gap) + var(--s)));
-  width: 100%;
-  width: calc(round(down, 100% - var(--s), 6 * var(--u)) + var(--s));
-  margin-inline: auto;
-  margin-left: round(down, calc((100% - (round(down, 100% - var(--s), 6 * var(--u)) + var(--s))) / 2), 2px);
-  background:
-    var(--key) left calc(var(--gap) + var(--s)) / auto var(--key-height) repeat-x,
-    linear-gradient(#ffe9b0, #ffe9b0) left top / 100% var(--s) no-repeat,
-    linear-gradient(#ffe9b0, #ffe9b0) left bottom / 100% var(--s) no-repeat;
-  opacity: 0.8;
+  height: var(--band-h);
+  margin-inline: calc(var(--pad-x) * -1);   /* out of the page padding: edge to edge */
+  background: var(--band-img) center / calc(42 * var(--cell)) var(--tile-h) repeat-x;
+  /* centred, and moved to a whole device pixel where round() exists */
+  background-position-x: round(nearest, calc(50% + 0.5 * var(--cell)), var(--dev));
+  opacity: 0.7;
 }
-/* Browsers without round(): the whole band is stretched a hair so that it still ends on a whole period. */
-@supports not (width: round(down, 10px, 3px)) {
-  .meander { width: 100%; margin-left: auto; background-repeat: round no-repeat, no-repeat, no-repeat; }
-}
-@media (min-width: 900px) and (min-height: 760px) {
-  .meander { --u: 6px; --key: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='26' viewBox='-1 -1 36 26' fill='none' stroke='%23ffe9b0' stroke-width='2' stroke-linejoin='miter' stroke-linecap='butt' shape-rendering='crispEdges'%3E%3Cpath d='M-6 24H0V0H24V12H12V24H42'/%3E%3C/svg%3E"); }
-}
+/* Extra air between each band and the content next to it, growing with the screen height. */
+.meander:first-child { margin-bottom: var(--band-air); }
+.meander:last-child { margin-top: var(--band-air); }
+.page { --band-air: clamp(6px, calc(var(--vh) * 1.4), 18px); }
 
 /* ---------- Title ---------- */
 header { text-align: center; }
@@ -211,12 +234,22 @@ main {
 
 .ring { fill: none; stroke: rgba(244, 236, 225, 0.55); stroke-width: 0.5; filter: drop-shadow(0 0 1.5px rgba(190, 205, 255, 0.6)); }
 .ring .ring-2 { stroke: rgba(244, 236, 225, 0.4); }
-.sparkles .gold { fill: var(--star); filter: drop-shadow(0 0 3px var(--star-glow)); }
-.sparkles .cream { fill: var(--cream); filter: drop-shadow(0 0 3px rgba(255, 238, 186, 0.45)); }
-.sparkles .light { fill: var(--text); filter: drop-shadow(0 0 2px rgba(246, 240, 227, 0.5)); }
-.sparkles .twinkle { animation: shimmer 5s ease-in-out infinite; }
-.sparkles .t2 { animation-duration: 7s; animation-delay: -2s; }
-@keyframes shimmer { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
+/* The four-pointed sparkles around the globe: each is a small layer that pulses in size and brightness. */
+.spark {
+  position: absolute;
+  aspect-ratio: 1;
+  pointer-events: none;
+  will-change: transform, opacity;
+  animation: spark-pulse calc(var(--spark-time) * var(--sk, 1)) ease-in-out calc(var(--spark-time) * var(--sk, 1) * var(--sp, 0) * -1) infinite;
+}
+.spark path { fill: currentColor; }
+.spark.gold { color: var(--star); filter: drop-shadow(0 0 3px var(--star-glow)); }
+.spark.cream { color: var(--cream); filter: drop-shadow(0 0 3px rgba(255, 238, 186, 0.45)); }
+.spark.light { color: var(--text); filter: drop-shadow(0 0 2px rgba(246, 240, 227, 0.5)); }
+@keyframes spark-pulse {
+  0%, 100% { transform: scale(calc(1 - var(--spark-pulse))); opacity: var(--spark-dim); }
+  50% { transform: scale(calc(1 + var(--spark-pulse))); opacity: 1; }
+}
 
 /* The leader line uses the slot's own pixels as units (set from globe.js). */
 .leader { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; opacity: 0; transition: opacity 0.22s; }
@@ -247,7 +280,7 @@ main {
 .cap-note:empty { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
-  .sky i.twinkle, .sparkles .twinkle { animation: none; }
+  .star-group, .spark { animation: none; }
   .caption, .leader { transition: none; }
 }
 
@@ -260,8 +293,9 @@ main {
     height: auto;
     min-height: 100vh;
     min-height: 100dvh;
-    padding: clamp(8px, calc(var(--vh) * 1.8), 14px) 20px;
-    padding-block: round(clamp(8px, calc(var(--vh) * 1.8), 14px), 2px);
+    --pad-x: 20px;
+    --band-air: clamp(4px, calc(var(--vh) * 1), 12px);
+    padding: var(--pad-y) var(--pad-x);
     gap: clamp(4px, calc(var(--vh) * 1), 8px);
     display: flex;
     flex-direction: column;
