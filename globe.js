@@ -34,7 +34,7 @@
   const ZOOM_EASE_MS = 90;          // wheel zooming glides towards its goal; this is the time constant of the glide
   const WHEEL_SPEED = 0.0022;       // zoom (as a power of e) per pixel of wheel movement; one mouse notch is about x1.25
   const PINCH_WHEEL_SPEED = 0.01;   // a trackpad pinch arrives as small wheel steps with the control key held
-  const GRID_STEPS = [20, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001];   // degrees between grid lines
+  const GRID_STEPS = [20, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02];   // degrees between grid lines (0.02 is the finest the deepest zoom can show)
   const GRID_SHOW_FROM = 0.1;       // a finer grid fades in when its lines are this far apart (share of the lens width) ...
   const GRID_SHOW_TO = 0.18;        // ... and is fully there at this spacing
 
@@ -248,6 +248,7 @@
       ownX: 0,            // the pin's true position, while x and y may still be sliding towards a group
       ownY: 0,
       merged: false,      // a group is drawn as one pin
+      stuck: false,       // a group that no zoom can pull apart (places too close together): always one pin
       form: 1,            // how formed the node is (0 to 1): easing in and out when groups join and fall apart
       weight: 1,          // how much of the node is shown: its own form, less the form of the group it belongs to
       level: 0,           // 0 = ordinary pin, 1 = fully active (eases between the two)
@@ -299,6 +300,7 @@
   let lensRadius = 0;      // radius of the lens in CSS pixels (the globe's radius when fully zoomed out)
   let pixelRatio = 1;
   let activeIndex = -1;
+  let activeMember = -1;   // for a group that cannot be pulled apart: which of its places the caption shows (-1: the group itself)
   let drawQueued = false;
   let animating = false;     // something is still moving, so the next frame is needed
   let viewChanged = true;    // the view moved since the active place was last chosen
@@ -752,7 +754,6 @@
     ctx.fill(fill);
     ctx.strokeStyle = 'rgba(244, 236, 225, 0.88)';
     ctx.lineWidth = 1;
-    ctx.lineJoin = 'round';
     ctx.stroke(coast);
     ctx.globalAlpha = 1;
   }
@@ -802,13 +803,19 @@
   function activeRingRadius() { return Math.max(15, lensRadius * 0.125); }
   function countSize() { return Math.max(13, Math.round(lensRadius * 0.06)); }
 
+  // A group whose parts would still be closer than the split distance at the deepest zoom can never fall apart.
+  function markGroupsThatCannotSplit() {
+    for (let i = leafCount; i < nodes.length; i++) nodes[i].stuck = nodes[i].height * lensRadius * zoomMax <= GROUP_SPLIT_PX;
+  }
+
   // Groups join (or fall apart) when the gap between their two parts, as drawn, crosses the merge or split distance.
   // The two distances differ, so a gap hovering around one of them does not make the group flicker.
   function updateMerges() {
     for (let i = leafCount; i < nodes.length; i++) {
       const node = nodes[i];
       const gap = node.height * planetRadius();
-      if (!node.merged && gap < GROUP_MERGE_PX) node.merged = true;
+      if (node.stuck) node.merged = true;
+      else if (!node.merged && gap < GROUP_MERGE_PX) node.merged = true;
       else if (node.merged && gap > GROUP_SPLIT_PX) node.merged = false;
     }
     for (let i = nodes.length - 1; i >= leafCount; i--) {   // inside a joined group, every smaller group is joined too
@@ -927,6 +934,7 @@
 
     updateDecoration();
     ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
+    ctx.lineJoin = 'round';
     ctx.clearRect(0, 0, side, side);
     drawSphere(centre);
     drawGrid();
@@ -958,7 +966,12 @@
         detail.state = 'failed';
         return;
       }
-      detail.rings = LAND_DETAIL.map((ring) => buildRing(decodeDetailRing(ring)));
+      try {
+        detail.rings = LAND_DETAIL.map((ring) => buildRing(decodeDetailRing(ring)));
+      } catch (error) {   // a damaged file: carry on with the coarse land
+        detail.state = 'failed';
+        return;
+      }
       growScratch(detail.rings);
       detail.state = 'ready';
       requestDraw();
@@ -1019,12 +1032,13 @@
     requestDetail();
     stopInertia();
     anchor = null;
-    zoomGoal = goal;
     if (reducedMotion.matches) {
       setCenter(lon, lat);
       setZoom(goal);
+      zoomGoal = zoom;
       return;
     }
+    zoomGoal = zoom;
     flight = {
       fromLon: centerLon,
       lonTurn: ((lon - centerLon + Math.PI * 3) % TWO_PI) - Math.PI,   // the short way round
@@ -1045,7 +1059,10 @@
       const along = smooth(done);
       setCenter(flight.fromLon + flight.lonTurn * along, flight.fromLat + (flight.toLat - flight.fromLat) * along);
       setZoom(flight.fromZoom * Math.pow(flight.goal / flight.fromZoom, along));
-      if (done === 1) flight = null;
+      if (done === 1) {
+        flight = null;
+        zoomGoal = zoom;
+      }
       return flight !== null;
     }
     if (zoom === zoomGoal) return false;
@@ -1070,6 +1087,7 @@
   // The place whose text is on the caption (and where the leader line points). It follows the active place
   // after the caption has faded out, so the text never snaps while it can be seen.
   let shownIndex = -1;
+  let shownMember = -1;
   let swapTimer = 0;
   let hiddenSince = -Infinity;
 
@@ -1080,17 +1098,22 @@
     return texts.monthAndYear.replace('{mês}', texts.months[place.month - 1]).replace('{ano}', place.year);
   }
 
-  // A place shows its name, date and note. A group says how many places it holds and asks the visitor to zoom in.
-  function showCaption(index) {
+  // The places inside a group, in the order of the config (the order of the dates).
+  function placesOf(node) { return node.members.slice().sort((a, b) => a - b); }
+
+  // A place shows its name, date and note. A group says how many places it holds and asks the visitor to zoom in,
+  // or, when no zoom can pull it apart, to tap through them; then "member" is the place of the group on show (-1: none).
+  function showCaption(index, member) {
     const node = nodes[index];
-    const place = node.place;
+    const place = member >= 0 ? SITE.places[placesOf(node)[member]] : node.place;
     const texts = SITE.placeTexts.group;
     const count = node.members.length;
     captionName.textContent = place ? place.name : pluralWord(count, texts.one, texts.other).replace('{n}', count);
     captionWhen.hidden = !place;
     captionYear.textContent = place ? describeDate(place) : '';
-    captionNote.textContent = place ? place.note || '' : texts.hint;
+    captionNote.textContent = place ? place.note || '' : node.stuck ? texts.tapHint : texts.hint;
     shownIndex = index;
+    shownMember = member;
     projectPins();
     updateLeader();
   }
@@ -1107,20 +1130,20 @@
       setCaptionVisible(false);
       return;
     }
-    if (activeIndex === shownIndex) {
+    if (activeIndex === shownIndex && activeMember === shownMember) {
       setCaptionVisible(true);
       return;
     }
     const alreadyGone = !caption.classList.contains('visible') && performance.now() - hiddenSince >= FADE_OUT_MS;
     if (shownIndex === -1 || alreadyGone || reducedMotion.matches) {
-      showCaption(activeIndex);
+      showCaption(activeIndex, activeMember);
       setCaptionVisible(true);
       return;
     }
     setCaptionVisible(false);   // fade out, change the text, fade back in
     swapTimer = setTimeout(() => {
       if (activeIndex < 0) return;
-      showCaption(activeIndex);
+      showCaption(activeIndex, activeMember);
       setCaptionVisible(true);
     }, FADE_OUT_MS);
   }
@@ -1128,8 +1151,16 @@
   function setActive(index) {
     if (index === activeIndex) return;
     activeIndex = index;
+    activeMember = -1;
     updateCaption();
     requestDraw();
+  }
+
+  // Tapping the active group that cannot be pulled apart shows its places one after the other, then the group again.
+  function showNextMember() {
+    const count = nodes[activeIndex].members.length;
+    activeMember = activeMember + 1 < count ? activeMember + 1 : -1;
+    updateCaption();
   }
 
   // A pin counts as visible when it faces us, is at least "minimum" formed (see the groups) and is not hidden by the lens edge.
@@ -1342,8 +1373,9 @@
       const [x, y] = localPoint(event);
       const tapped = pinNear(x, y, event.pointerType === 'touch' ? 28 : 18);
       if (tapped !== -1) {
-        setActive(tapped);
-        if (nodes[tapped].children) flyToGroup(nodes[tapped]);
+        if (nodes[tapped].stuck && tapped === activeIndex) showNextMember();
+        else setActive(tapped);
+        if (nodes[tapped].children && !nodes[tapped].stuck) flyToGroup(nodes[tapped]);
         requestDraw();
       }
       return;
@@ -1355,9 +1387,12 @@
   canvas.addEventListener('pointercancel', endPointer);
 
   // The wheel zooms towards the pointer; so does a trackpad pinch (a wheel with the control key held).
-  // Over the globe these never scroll or zoom the page.
+  // Over the globe these never scroll or zoom the page. While the view is flying to a tapped group the wheel is
+  // ignored: a trackpad often keeps sending wheel steps for a moment after a tap, and they must not pull the
+  // flight off course. A drag, a pinch or another tap still takes over at once.
   canvas.addEventListener('wheel', (event) => {
     event.preventDefault();
+    if (flight) return;
     const pixels = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 300 : 1);
     const change = clamp(-pixels * (event.ctrlKey ? PINCH_WHEEL_SPEED : WHEEL_SPEED), -1, 1);
     const goal = clamp(zoomGoal * Math.exp(change), 1, zoomMax);
@@ -1381,7 +1416,9 @@
     canvas.width = Math.round(side * pixelRatio);
     canvas.height = Math.round(side * pixelRatio);
     zoomMax = zoomLimit();
+    markGroupsThatCannotSplit();
     zoomGoal = Math.min(zoomGoal, zoomMax);
+    if (flight) flight.goal = Math.min(flight.goal, zoomMax);
     setZoom(zoom);
     // Drawn straight away: changing the canvas size clears it, and waiting for the next frame would show a blank globe.
     draw();

@@ -97,7 +97,13 @@ const SITE = {
 
     // Several places close together are drawn as one pin, with the number of places beside it. {n} is that number.
     // The first line is shown under the globe when the group is selected; the second line asks to zoom in.
-    group: { one: '{n} lugar', other: '{n} lugares', hint: 'Aproxime para ver cada um' },
+    group: {
+      one: '{n} lugar',
+      other: '{n} lugares',
+      hint: 'Aproxime para ver cada um',
+      // For places so close together that zooming cannot separate them: tapping the pin shows them one after the other.
+      tapHint: 'Toque para ver cada um',
+    },
   },
 
   // The point of the globe that faces the screen when the page opens.
