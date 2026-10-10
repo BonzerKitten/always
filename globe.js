@@ -21,6 +21,14 @@
   const TAP_MOVE_LIMIT = 6;         // pixels; moving less than this is a tap, not a drag
   const INERTIA_MS = 420;           // how long the spin takes to fade out after release
   const STOP_SPEED = 0.00002;       // radians per millisecond
+  const EASE_MS = 330;              // how long a pin takes to grow into (or out of) the active look
+  const FADE_OUT_MS = 220;          // the caption fades out this long before its text changes
+  const SWITCH_MARGIN = 4 * DEG;    // another pin must be this much nearer the centre before it takes over
+
+  // Colours of the starlight (the same warm tones as style.css).
+  const PIN_COLOR = '#ffe38a';
+  const PIN_GLOW = 'rgba(255, 227, 138, 0.9)';
+  const RING_COLOR = '255, 238, 186';
 
   const canvas = document.getElementById('globe-canvas');
   const globeBox = document.getElementById('globe');
@@ -147,6 +155,7 @@
     x: 0,
     y: 0,
     z: 0,
+    level: 0,   // 0 = ordinary pin, 1 = fully active (eases between the two)
   }));
 
   // ---------- View state ----------
@@ -158,6 +167,8 @@
   let pixelRatio = 1;
   let activeIndex = -1;
   let drawQueued = false;
+  let animating = false;     // some pin is still easing, so the next frame is needed
+  let lastFrameTime = 0;
 
   /*
    * Turns the Earth so that (centerLon, centerLat) faces the viewer, and writes each
@@ -401,21 +412,42 @@
     }
   }
 
-  function drawPins() {
-    ctx.shadowColor = 'rgba(255, 134, 179, 0.95)';
-    ctx.shadowBlur = 9 * pixelRatio;
+  function smooth(t) { return t * t * (3 - 2 * t); }
+
+  // Moves every pin's level towards 1 (the active pin) or 0 (the others). Returns true while anything is still moving.
+  function stepLevels(now) {
+    const step = animating ? Math.min(now - lastFrameTime, 50) / EASE_MS : 0;   // the first frame of a change only starts it
+    lastFrameTime = now;
+    let moving = false;
     places.forEach((pin, index) => {
+      const target = index === activeIndex ? 1 : 0;
+      if (pin.level === target) return;
+      if (reducedMotion.matches) {
+        pin.level = target;
+        return;
+      }
+      pin.level = target > pin.level ? Math.min(target, pin.level + step) : Math.max(target, pin.level - step);
+      if (pin.level !== target) moving = true;
+    });
+    return moving;
+  }
+
+  function drawPins() {
+    ctx.shadowColor = PIN_GLOW;
+    ctx.shadowBlur = 9 * pixelRatio;
+    places.forEach((pin) => {
       if (pin.z <= PIN_MIN_Z) return;
-      const isActive = index === activeIndex;
+      const grow = smooth(pin.level);
       ctx.globalAlpha = Math.min(1, (pin.z - PIN_MIN_Z) * 6);
-      ctx.fillStyle = '#ff86b3';
-      sparklePath(pin.x, pin.y, isActive ? activePinSize() : pinSize());
+      ctx.fillStyle = PIN_COLOR;
+      sparklePath(pin.x, pin.y, pinSize() + (activePinSize() - pinSize()) * grow);
       ctx.fill();
-      if (isActive) {
-        ctx.strokeStyle = 'rgba(255, 134, 179, 0.85)';
+      if (grow > 0) {
+        ctx.globalAlpha *= grow;
+        ctx.strokeStyle = 'rgba(' + RING_COLOR + ', 0.85)';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.arc(pin.x, pin.y, activeRingRadius(), 0, TWO_PI);
+        ctx.arc(pin.x, pin.y, activeRingRadius() * (0.7 + 0.3 * grow), 0, TWO_PI);
         ctx.stroke();
       }
     });
@@ -428,6 +460,7 @@
     drawQueued = false;
     if (side === 0) return;
     const centre = side / 2;
+    animating = stepLevels(performance.now());
     ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
     ctx.clearRect(0, 0, side, side);
     drawSphere(centre);
@@ -437,6 +470,7 @@
     projectPins();
     drawPins();
     updateLeader();
+    if (animating) requestDraw();   // frames are drawn only while something is changing
   }
 
   function requestDraw() {
@@ -451,39 +485,79 @@
   const captionYear = document.getElementById('cap-year');
   const captionNote = document.getElementById('cap-note');
 
+  // The place whose text is on the caption (and where the leader line points). It follows the active place
+  // after the caption has faded out, so the text never snaps while it can be seen.
+  let shownIndex = -1;
+  let swapTimer = 0;
+  let hiddenSince = -Infinity;
+
   function showCaption(index) {
     const place = places[index].place;
     captionName.textContent = place.name;
     captionYear.textContent = place.year;
     captionNote.textContent = place.note || '';
+    shownIndex = index;
+    projectPins();
+    updateLeader();
+  }
+
+  function setCaptionVisible(visible) {
+    if (!visible && caption.classList.contains('visible')) hiddenSince = performance.now();
+    caption.classList.toggle('visible', visible);
+    leader.classList.toggle('visible', visible);
+  }
+
+  function updateCaption() {
+    clearTimeout(swapTimer);
+    if (activeIndex < 0) {
+      setCaptionVisible(false);
+      return;
+    }
+    if (activeIndex === shownIndex) {
+      setCaptionVisible(true);
+      return;
+    }
+    const alreadyGone = !caption.classList.contains('visible') && performance.now() - hiddenSince >= FADE_OUT_MS;
+    if (shownIndex === -1 || alreadyGone || reducedMotion.matches) {
+      showCaption(activeIndex);
+      setCaptionVisible(true);
+      return;
+    }
+    setCaptionVisible(false);   // fade out, change the text, fade back in
+    swapTimer = setTimeout(() => {
+      if (activeIndex < 0) return;
+      showCaption(activeIndex);
+      setCaptionVisible(true);
+    }, FADE_OUT_MS);
   }
 
   function setActive(index) {
     if (index === activeIndex) return;
     activeIndex = index;
-    if (index >= 0) showCaption(index);
-    caption.classList.toggle('visible', index >= 0);
-    leader.classList.toggle('visible', index >= 0);
+    updateCaption();
+    requestDraw();
   }
 
-  // The visible pin nearest the middle of the globe's face (the one facing us most).
+  // The visible pin nearest the middle of the globe's face (the one facing us most). The current place only
+  // gives way to another pin that is clearly nearer, so it does not flicker while two are about equally near.
   function pickActiveFromView() {
     projectPins();
     let best = -1;
     places.forEach((pin, index) => {
       if (pin.z > PIN_MIN_Z && (best === -1 || pin.z > places[best].z)) best = index;
     });
+    const current = places[activeIndex];
+    if (best !== -1 && current && current.z > PIN_MIN_Z) {
+      const away = (pin) => Math.acos(Math.min(1, pin.z));
+      if (away(places[best]) > away(current) - SWITCH_MARGIN) best = activeIndex;
+    }
     setActive(best);
   }
 
   // Draws the thin line from the active pin down to the caption.
   function updateLeader() {
-    const pin = places[activeIndex];
-    if (!pin || pin.z <= PIN_MIN_Z) {
-      leader.classList.remove('visible');
-      return;
-    }
-    leader.classList.add('visible');
+    const pin = places[shownIndex];
+    if (!pin || pin.z <= PIN_MIN_Z) return;   // the leader is fading out with the caption; leave it where it was
     // All positions are in pixels from the top left of the slot, which is what the leader's svg uses.
     const slotBox = slot.getBoundingClientRect();
     const canvasBox = canvas.getBoundingClientRect();
@@ -633,8 +707,25 @@
     draw();
   }
 
+  // The leader line is measured between the pin and the caption, so it is measured again whenever the layout
+  // moves (the slot or caption changes size, or the fonts finish loading and the columns change width).
+  function relayout() {
+    if (side === 0) return;
+    const box = canvas.getBoundingClientRect();
+    if (box.width !== side) resize();
+    else updateLeader();
+  }
+
   new ResizeObserver(resize).observe(globeBox);
+  const layoutObserver = new ResizeObserver(relayout);
+  layoutObserver.observe(slot);
+  layoutObserver.observe(caption);
   window.addEventListener('resize', resize);
+  window.addEventListener('load', relayout);
+  if (document.fonts) {
+    document.fonts.addEventListener('loadingdone', relayout);
+    document.fonts.ready.then(relayout);
+  }
   resize();
   pickActiveFromView();
 })();
