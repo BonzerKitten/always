@@ -356,4 +356,12 @@ main {
   }
   .counters .num { font-size: clamp(26px, min(max(6vw, 30px), calc(var(--vh) * 4.2)), 48px); }
   .counters .label { margin: 0; font-size: clamp(12px, 1.9vw, 15px); line-height: 1.35; }
+
+  /* The three rows share one number column: the usual width, or wider when a number needs more room, so a long number
+     never runs into its label and the three labels keep one left edge. (Without subgrid each row has its own column.) */
+  @supports (grid-template-columns: subgrid) {
+    .counters { display: grid; grid-template-columns: minmax(clamp(84px, 17vw, 140px), max-content) 1fr; column-gap: 14px; }
+    .counters li { grid-template-columns: subgrid; grid-column: 1 / -1; }
+    .counters .num { white-space: nowrap; }
+  }
 }
