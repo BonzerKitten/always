@@ -65,17 +65,34 @@ const SITE = {
   },
 
   /*
-   * The places on the globe. THESE FOUR ARE PLACEHOLDERS (invented places, years and notes):
-   * replace them with the real ones. To add a place, copy one block { ... }, paste it at the end of the
+   * The places on the globe, oldest first. To add a place, copy one block { ... }, paste it at the end of the
    * list and change the values. Latitude: north is positive, south is negative.
-   * Longitude: east is positive, west is negative. "note" is optional: delete the line if unwanted.
+   * Longitude: east is positive, west is negative.
+   * The date is the year and the month (1 to 12). The month is optional: with only a year, only the year is shown.
+   * "note" is optional too: a short line under the name. Delete the line if unwanted.
+   * Nothing else needs to change when you add or remove a place.
    */
   places: [
-    { name: 'Rio de Janeiro', lat: -22.91, lon: -43.17, year: 2015, note: 'Nosso primeiro mar juntos' },
-    { name: 'Manaus', lat: -3.12, lon: -60.02, year: 2016, note: 'Onde os rios se encontram' },
-    { name: 'Salvador', lat: -12.97, lon: -38.5, year: 2018, note: 'Pôr do sol e acarajé' },
-    { name: 'Foz do Iguaçu', lat: -25.55, lon: -54.59, year: 2022, note: 'Tanta água caindo, e nós dois olhando' },
+    { name: 'Campos do Jordão', lat: -22.74, lon: -45.59, year: 2021, month: 10 },
+    { name: 'Gramado', lat: -29.38, lon: -50.87, year: 2022, month: 1 },
+    { name: 'Ubatuba', lat: -23.43, lon: -45.08, year: 2022, month: 12 },
+    { name: 'Itu', lat: -23.26, lon: -47.3, year: 2023, month: 4 },
+    { name: 'Guildford', lat: 51.24, lon: -0.57, year: 2024, month: 12 },
+    { name: 'Londres', lat: 51.51, lon: -0.13, year: 2025, month: 7 },
+    { name: 'Bath', lat: 51.38, lon: -2.36, year: 2025, month: 7 },
+    { name: 'Godalming', lat: 51.19, lon: -0.61, year: 2026, month: 7 },
   ],
+
+  /*
+   * Wording under the globe. {mês} and {ano} are replaced by the month name and the year.
+   */
+  placeTexts: {
+    months: [
+      'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+      'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
+    ],
+    monthAndYear: '{mês} de {ano}',
+  },
 
   // The point of the globe that faces the screen when the page opens.
   globeStart: { lat: -20, lon: -48 },

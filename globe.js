@@ -491,10 +491,17 @@
   let swapTimer = 0;
   let hiddenSince = -Infinity;
 
+  // "outubro de 2021", or just "2021" for a place with a year only.
+  function describeDate(place) {
+    const texts = SITE.placeTexts;
+    if (!place.month) return String(place.year);
+    return texts.monthAndYear.replace('{mês}', texts.months[place.month - 1]).replace('{ano}', place.year);
+  }
+
   function showCaption(index) {
     const place = places[index].place;
     captionName.textContent = place.name;
-    captionYear.textContent = place.year;
+    captionYear.textContent = describeDate(place);
     captionNote.textContent = place.note || '';
     shownIndex = index;
     projectPins();
