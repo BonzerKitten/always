@@ -4,6 +4,9 @@
  */
 const SITE = {
 
+  // The text of the browser tab.
+  tabTitle: 'Sempre',
+
   // The big title and the small line under it.
   title: 'SEMPRE',
   subtitle: 'desde 2014',
@@ -62,7 +65,8 @@ const SITE = {
   },
 
   /*
-   * The places on the globe. To add a place, copy one block { ... }, paste it at the end of the
+   * The places on the globe. THESE FOUR ARE PLACEHOLDERS (invented places, years and notes):
+   * replace them with the real ones. To add a place, copy one block { ... }, paste it at the end of the
    * list and change the values. Latitude: north is positive, south is negative.
    * Longitude: east is positive, west is negative. "note" is optional: delete the line if unwanted.
    */

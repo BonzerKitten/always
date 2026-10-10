@@ -1,4 +1,4 @@
-/* Writes the title and the counters into the page, and refreshes them after midnight. */
+/* Writes the title and the counters into the page, and keeps them up to date as days pass. */
 
 function setText(id, text) {
   document.getElementById(id).textContent = text;
@@ -18,22 +18,16 @@ function renderCounters() {
   setText('half-label', counters.half.label);
 }
 
-// Runs again a moment after the next local midnight, so a page left open shows the new day.
-function scheduleMidnightRefresh() {
-  const now = new Date();
-  const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 1);
-  setTimeout(() => {
-    renderCounters();
-    scheduleMidnightRefresh();
-  }, nextMidnight - now);
-}
-
+document.title = SITE.tabTitle;
 setText('title', SITE.title);
 setText('subtitle', SITE.subtitle);
 renderCounters();
-scheduleMidnightRefresh();
 
-// Timers can be paused while a phone sleeps or a tab is hidden; check again when the page is shown.
+// Checked every 30 seconds instead of waiting for midnight: timers can be paused or skipped when a computer
+// sleeps or the clock is changed, so a single midnight timer could leave yesterday's numbers on the page.
+setInterval(renderCounters, 30000);
+
+// Also refresh the moment the page is shown again.
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) renderCounters();
 });
