@@ -106,7 +106,9 @@ body {
    centred on a point where the key mirrors itself, so the cut at the left and right edges is the same.
    --cell is chosen so one cell is a whole number of device pixels (2 px at ratio 1, 1.5 px at 2, 5/3 px at 3),
    which keeps every edge sharp. Change --cell below to make the whole band larger or smaller. */
-:root { --band-img: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 42 10' preserveAspectRatio='none' fill='none' stroke='%23ffe9b0' shape-rendering='crispEdges'%3E%3Cpath d='M0 .5H42M0 9.5H42'/%3E%3Cpath transform='translate(0.5 2.5)' stroke-linecap='square' stroke-linejoin='miter' d='M2 3V2H4V5H0V0H6V5H12V0H8V3H10V2'/%3E%3Cpath transform='translate(14.5 2.5)' stroke-linecap='square' stroke-linejoin='miter' d='M2 3V2H4V5H0V0H6V5H12V0H8V3H10V2'/%3E%3Cpath transform='translate(28.5 2.5)' stroke-linecap='square' stroke-linejoin='miter' d='M2 3V2H4V5H0V0H6V5H12V0H8V3H10V2'/%3E%3C/svg%3E"); --tile-h: calc(10 * var(--cell)); --cell: 2px; --dev: 1px; --band-h: calc(10 * var(--cell)); --pad-y: var(--band-h); }   /* --dev is one device pixel, used to put the band on whole device pixels */
+/* band.js (when it runs) takes over from --cell: it picks the whole-device-pixel cell nearest to --cell-target, the
+   one number to change to make the band larger or smaller. The rules below with --cell are the version without it. */
+:root { --cell-target: 2px; --band-img: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 42 10' preserveAspectRatio='none' fill='none' stroke='%23ffe9b0' shape-rendering='crispEdges'%3E%3Cpath d='M0 .5H42M0 9.5H42'/%3E%3Cpath transform='translate(0.5 2.5)' stroke-linecap='square' stroke-linejoin='miter' d='M2 3V2H4V5H0V0H6V5H12V0H8V3H10V2'/%3E%3Cpath transform='translate(14.5 2.5)' stroke-linecap='square' stroke-linejoin='miter' d='M2 3V2H4V5H0V0H6V5H12V0H8V3H10V2'/%3E%3Cpath transform='translate(28.5 2.5)' stroke-linecap='square' stroke-linejoin='miter' d='M2 3V2H4V5H0V0H6V5H12V0H8V3H10V2'/%3E%3C/svg%3E"); --tile-h: calc(10 * var(--cell)); --cell: 2px; --dev: 1px; --band-h: calc(10 * var(--cell)); --pad-y: var(--band-h); }   /* --dev is one device pixel, used to put the band on whole device pixels */
 @media (min-resolution: 1.4dppx) and (max-resolution: 1.6dppx) { :root { --dev: calc(2px / 3); } }
 @media (min-resolution: 1.9dppx) and (max-resolution: 2.1dppx) { :root { --dev: 0.5px; } }
 @media (min-resolution: 2.9dppx) { :root { --dev: calc(1px / 3); } }
@@ -122,6 +124,7 @@ body {
 }
 
 .meander {
+  will-change: transform;   /* its own layer, drawn on exact device pixels (otherwise the lower band can come out soft on some screens) */
   height: var(--band-h);
   margin-inline: calc(var(--pad-x) * -1);   /* out of the page padding: edge to edge */
   background: var(--band-img) center / calc(42 * var(--cell)) var(--tile-h) repeat-x;
@@ -294,6 +297,7 @@ main {
     min-height: 100vh;
     min-height: 100dvh;
     --pad-x: 20px;
+    --cell-target: 1.5px;
     --band-air: clamp(4px, calc(var(--vh) * 1), 12px);
     padding: var(--pad-y) var(--pad-x);
     gap: clamp(4px, calc(var(--vh) * 1), 8px);
