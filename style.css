@@ -53,6 +53,7 @@ body {
 /* ---------- Page frame ---------- */
 .page {
   position: relative;
+  height: 100vh;
   height: 100dvh;
   min-height: 560px;
   display: grid;
@@ -137,15 +138,26 @@ main {
   letter-spacing: 0.04em;
 }
 
-/* ---------- Globe ---------- */
-.globe-slot { min-width: 0; min-height: 0; height: 100%; display: flex; justify-content: center; align-items: center; }
+/* ---------- Globe ----------
+   The slot holds the globe (with its orbit rings) and, below it, the caption of the active place.
+   The caption is part of the layout, so it can grow without ever covering anything. */
+.globe-slot {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  height: min(100%, calc(38vw + 72px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+.stage-box { display: contents; }
 .globe {
   position: relative;
-  height: min(100%, 46vw);
-  aspect-ratio: 292 / 262;
+  flex: none;
+  height: calc(100% - 72px);   /* the rest of the slot is the caption */
+  aspect-ratio: 292 / 220;
 }
-.stage, .deco { position: absolute; inset: 0; }
-.deco { width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.deco { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
 
 /* The canvas is the globe disc (200 of 292 units) plus a 14 unit margin for pins. */
 .globe-canvas {
@@ -171,22 +183,32 @@ main {
 .sparkles .t2 { animation-duration: 7s; animation-delay: -2s; }
 @keyframes shimmer { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 
+/* The leader line uses the slot's own pixels as units (set from globe.js). */
 .leader { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; opacity: 0; transition: opacity 0.5s; }
 .leader line { stroke: rgba(244, 236, 225, 0.3); stroke-width: 0.6; }
 
 .caption {
-  position: absolute;
-  left: 0;
-  top: 86.5%;
-  width: 100%;
+  flex: none;
+  width: 0;
+  min-width: 100%;      /* as wide as the globe, but never makes the column wider */
+  height: 72px;         /* room for the name and a note of up to three lines */
   text-align: center;
   opacity: 0;
   transition: opacity 0.5s;
 }
 .caption.visible, .leader.visible { opacity: 1; }
-.cap-name { display: block; font-size: clamp(12px, 0.95vw, 14px); letter-spacing: 0.14em; white-space: nowrap; }
+.cap-name { display: block; font-size: clamp(12px, 0.95vw, 14px); letter-spacing: 0.14em; }
 .cap-name .year { color: var(--pink); }
-.cap-note { display: block; margin-top: 0.4em; font-size: clamp(12px, 0.85vw, 13px); letter-spacing: 0.06em; color: var(--text-soft); }
+.cap-note {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  margin-top: 0.4em;
+  font-size: clamp(12px, 0.85vw, 13px);
+  letter-spacing: 0.06em;
+  color: var(--text-soft);
+}
 .cap-note:empty { display: none; }
 
 @media (prefers-reduced-motion: reduce) {
@@ -194,14 +216,18 @@ main {
   .caption, .leader { transition: none; }
 }
 
-/* ---------- Phones and portrait screens: everything stacked ---------- */
+/* ---------- Phones and portrait screens: everything stacked ----------
+   The page is at least one screen tall and grows when the content needs more room
+   (a phone held sideways), so the globe never shrinks below a usable size. */
 @media (max-width: 760px), (max-aspect-ratio: 1/1) {
-  .page { padding: 14px 20px; gap: 8px; }
+  .page { height: auto; min-height: 100vh; min-height: 100dvh; padding: 14px 20px; gap: 8px; display: flex; flex-direction: column; }
   h1 { font-size: clamp(40px, 14vw, 96px); }
   .since { font-size: clamp(12px, 2vw, 15px); }
   main {
+    flex: 1 0 auto;
+    min-height: auto;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-rows: auto 1fr auto;
     gap: 6px;
     justify-items: center;
   }
@@ -211,9 +237,24 @@ main {
   .hero .rule { display: none; }
   .hero .sub { font-size: clamp(12px, 1.9vw, 15px); margin-top: 0.5em; }
 
-  .globe-slot { container-type: size; width: 100%; }
-  /* Wider than the text column on purpose: the spare room around the orbit rings lets the globe grow. */
-  .globe { flex: none; height: auto; width: min(100cqw + 40px, 100cqh * 292 / 262); }
+  .globe-slot { width: 100%; height: auto; min-height: auto; align-self: stretch; }
+  .stage-box {
+    display: flex;
+    flex: 1 1 0;
+    min-height: 240px;           /* the smallest globe area: the disc is then about 218 px across */
+    width: 100%;
+    justify-content: center;
+    align-items: center;
+    container-type: size;
+  }
+  /* Wider than the text column on purpose: the spare room around the orbit rings lets the globe grow.
+     The first width is for browsers without container units. */
+  .globe {
+    height: auto;
+    width: min(100vw, max(320px, calc((100vh - 470px) * 292 / 220)));
+    width: min(100cqw + 40px, 100cqh * 292 / 220);
+  }
+  .caption { height: auto; min-height: 40px; margin-top: 4px; }
   .cap-name, .cap-note { font-size: clamp(12px, 1.9vw, 15px); }
 
   .counters { justify-self: stretch; width: auto; }

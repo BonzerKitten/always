@@ -24,6 +24,7 @@
 
   const canvas = document.getElementById('globe-canvas');
   const globeBox = document.getElementById('globe');
+  const slot = document.getElementById('globe-slot');
   const caption = document.getElementById('caption');
   const leader = document.getElementById('leader');
   const leaderLine = document.getElementById('leader-line');
@@ -39,24 +40,62 @@
     return [Math.cos(lat) * Math.cos(lon), Math.cos(lat) * Math.sin(lon), Math.sin(lat)];
   }
 
-  // Turns a ring of [lon, lat, lon, lat...] into unit vectors, adding points along long edges.
-  function ringToVectors(flat) {
-    const points = [];
+  const SAME_POINT = 1e-9;
+
+  /*
+   * Turns a ring of [lon, lat, lon, lat...] into unit vectors, adding points along long edges.
+   * seamAfter[i] is true when the edge leaving point i runs along the 180 degree meridian. Natural Earth
+   * cuts land there to fit a flat map, so those edges are needed for the fill but are not coast.
+   */
+  function ringToPoints(flat) {
+    const vectors = [];
+    const seamAfter = [];
     const count = flat.length / 2;
     for (let i = 0; i < count; i++) {
       const j = (i + 1) % count;
       const lon1 = flat[2 * i], lat1 = flat[2 * i + 1];
       const lon2 = flat[2 * j], lat2 = flat[2 * j + 1];
-      const wrapsAroundPole = Math.abs(lon2 - lon1) > 180; // the edge along the bottom of Antarctica
+      const isSeam = Math.abs(lon1) === 180 && Math.abs(lon2) === 180;
+      const wrapsAroundPole = Math.abs(lon2 - lon1) > 180; // from lon 180 to -180: the same line on the globe
       const steps = wrapsAroundPole
         ? 1
         : Math.max(1, Math.ceil(Math.max(Math.abs(lon2 - lon1), Math.abs(lat2 - lat1)) / MAX_EDGE_STEP));
       for (let s = 0; s < steps; s++) {
         const t = s / steps;
-        points.push(toVector(lon1 + (lon2 - lon1) * t, lat1 + (lat2 - lat1) * t));
+        const vector = toVector(lon1 + (lon2 - lon1) * t, lat1 + (lat2 - lat1) * t);
+        const last = vectors[vectors.length - 1];
+        if (last && Math.hypot(vector[0] - last[0], vector[1] - last[1], vector[2] - last[2]) < SAME_POINT) {
+          seamAfter[seamAfter.length - 1] = isSeam; // the same point twice (lon 180 and -180): keep one
+        } else {
+          vectors.push(vector);
+          seamAfter.push(isSeam);
+        }
       }
     }
-    return points;
+    const first = vectors[0], last = vectors[vectors.length - 1];
+    if (vectors.length > 1 && Math.hypot(first[0] - last[0], first[1] - last[1], first[2] - last[2]) < SAME_POINT) {
+      vectors.pop();
+      seamAfter.pop();
+    }
+    return { vectors, seamAfter };
+  }
+
+  // Splits a ring into the open pieces of real coast, leaving out the seam edges.
+  function coastPieces(vectors, seamAfter) {
+    const total = vectors.length;
+    const firstSeam = seamAfter.indexOf(true);
+    if (firstSeam === -1) return null;
+    const pieces = [];
+    let piece = [];
+    for (let step = 1; step <= total; step++) {
+      const index = (firstSeam + step) % total;
+      piece.push(vectors[index]);
+      if (seamAfter[index]) {
+        if (piece.length > 1) pieces.push(piece);
+        piece = [];
+      }
+    }
+    return pieces;
   }
 
   function makeLine(vectors, closed) {
@@ -73,10 +112,18 @@
     return doubleArea > 0;
   }
 
+  /*
+   * Each land ring has a closed outline for the fill, and (only when it has seam edges)
+   * separate open coast lines for the stroke.
+   */
   const landRings = LAND_RINGS.map((flat) => {
-    const ring = makeLine(ringToVectors(flat), true);
-    ring.isLake = isLakeRing(flat);
-    return ring;
+    const { vectors, seamAfter } = ringToPoints(flat);
+    const pieces = coastPieces(vectors, seamAfter);
+    return {
+      outline: makeLine(vectors, true),
+      coastLines: pieces && pieces.map((piece) => makeLine(piece, false)),
+      isLake: isLakeRing(flat),
+    };
   });
 
   // The faint grid: meridians (open lines from pole to pole) and parallels (closed circles).
@@ -301,16 +348,22 @@
     const fill = new Path2D();
     const coast = new Path2D();
     for (const ring of landRings) {
-      turnToView(ring.vectors, ring.view);
-      const { chains, hidden } = visibleChains(ring);
+      turnToView(ring.outline.vectors, ring.outline.view);
+      const { chains, hidden } = visibleChains(ring.outline);
       if (chains.length === 0) continue;
       if (!hidden) {
         addPolyline(fill, chains[0], true);
-        addPolyline(coast, chains[0], true);
+        if (!ring.coastLines) addPolyline(coast, chains[0], true);
       } else {
         // A lake cut by the edge is left unfilled: its fill would have to be "everything except the lake".
         if (!ring.isLake) addFilledShape(fill, chains);
-        for (const chain of chains) addPolyline(coast, chain, false);
+        if (!ring.coastLines) for (const chain of chains) addPolyline(coast, chain, false);
+      }
+      if (ring.coastLines) {
+        for (const line of ring.coastLines) {
+          turnToView(line.vectors, line.view);
+          for (const chain of visibleChains(line).chains) addPolyline(coast, chain, false);
+        }
       }
     }
     ctx.fillStyle = 'rgba(244, 236, 225, 0.13)';
@@ -431,10 +484,14 @@
       return;
     }
     leader.classList.add('visible');
-    const startX = canvas.offsetLeft + pin.x;
-    const startY = canvas.offsetTop + pin.y;
-    const endX = globeBox.clientWidth / 2;
-    const endY = caption.offsetTop - 4;
+    // All positions are in pixels from the top left of the slot, which is what the leader's svg uses.
+    const slotBox = slot.getBoundingClientRect();
+    const canvasBox = canvas.getBoundingClientRect();
+    const captionBox = caption.getBoundingClientRect();
+    const startX = canvasBox.left - slotBox.left + pin.x;
+    const startY = canvasBox.top - slotBox.top + pin.y;
+    const endX = captionBox.left - slotBox.left + captionBox.width / 2;
+    const endY = captionBox.top - slotBox.top - 4;
     const length = Math.hypot(endX - startX, endY - startY) || 1;
     const gap = activeRingRadius() + 3;
     leaderLine.setAttribute('x1', startX + ((endX - startX) / length) * gap);
@@ -572,8 +629,8 @@
     pixelRatio = window.devicePixelRatio || 1;
     canvas.width = Math.round(side * pixelRatio);
     canvas.height = Math.round(side * pixelRatio);
-    leader.setAttribute('viewBox', '0 0 ' + globeBox.clientWidth + ' ' + globeBox.clientHeight);
-    requestDraw();
+    // Drawn straight away: changing the canvas size clears it, and waiting for the next frame would show a blank globe.
+    draw();
   }
 
   new ResizeObserver(resize).observe(globeBox);

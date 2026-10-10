@@ -28,11 +28,11 @@
       <p class="sub" id="hero-breakdown"></p>
     </section>
 
-    <div class="globe-slot">
-      <div class="globe" id="globe">
-        <div class="stage">
+    <div class="globe-slot" id="globe-slot">
+      <div class="stage-box">
+        <div class="globe" id="globe">
           <!-- Decoration behind the globe: soft halo, whole orbit rings and floating sparkles. Never catches clicks or touches. -->
-          <svg class="deco deco-back" viewBox="-46 -14 292 262" aria-hidden="true">
+          <svg class="deco deco-back" viewBox="-46 -14 292 220" aria-hidden="true">
             <defs>
               <radialGradient id="halo" cx="100" cy="100" r="150" gradientUnits="userSpaceOnUse">
                 <stop offset=".62" stop-color="#8fa8ff" stop-opacity=".30"/>
@@ -51,7 +51,7 @@
           <canvas class="globe-canvas" id="globe-canvas" role="img" aria-label="Globo com os lugares que visitamos"></canvas>
 
           <!-- Decoration in front of the globe: the near half of each ring, then the sparkles. -->
-          <svg class="deco deco-front" viewBox="-46 -14 292 262" aria-hidden="true">
+          <svg class="deco deco-front" viewBox="-46 -14 292 220" aria-hidden="true">
             <g class="ring">
               <path transform="rotate(-22 100 100)" d="M-40,100A140,36 0 0 0 240,100"/>
               <path class="ring-2" transform="rotate(14 100 100)" d="M-14,100A114,23 0 0 0 214,100"/>
@@ -64,14 +64,14 @@
             </g>
           </svg>
         </div>
-
-        <svg class="leader" id="leader" aria-hidden="true"><line id="leader-line" x1="0" y1="0" x2="0" y2="0"/></svg>
-
-        <p class="caption" id="caption">
-          <span class="cap-name"><span id="cap-name"></span>, <span class="year" id="cap-year"></span></span>
-          <span class="cap-note" id="cap-note"></span>
-        </p>
       </div>
+
+      <p class="caption" id="caption">
+        <span class="cap-name"><span id="cap-name"></span>, <span class="year" id="cap-year"></span></span>
+        <span class="cap-note" id="cap-note"></span>
+      </p>
+
+      <svg class="leader" id="leader" aria-hidden="true"><line id="leader-line" x1="0" y1="0" x2="0" y2="0"/></svg>
     </div>
 
     <ul class="counters">
