@@ -34,13 +34,42 @@
           <!-- Decoration behind the globe: soft halo, whole orbit rings and floating sparkles. Never catches clicks or touches. -->
           <svg class="deco deco-back" viewBox="-46 -14 292 234" aria-hidden="true">
             <defs>
-              <radialGradient id="halo" cx="100" cy="100" r="150" gradientUnits="userSpaceOnUse">
-                <stop offset=".62" stop-color="#8fa8ff" stop-opacity=".30"/>
-                <stop offset=".70" stop-color="#8fa8ff" stop-opacity=".10"/>
-                <stop offset="1" stop-color="#8fa8ff" stop-opacity="0"/>
+              <!-- The glow fades out along a smooth curve, 0.10 x (1 - u)^2 where u runs from the rim of the globe to the
+                   end of the glow (radius 175), so it is strongest at the globe and ends gently at exactly zero. -->
+              <radialGradient id="halo" cx="100" cy="100" r="175" gradientUnits="userSpaceOnUse">
+                <stop offset="0.5314" stop-color="#8fa8ff" stop-opacity=".30"/>
+                <stop offset="0.6000" stop-color="#8fa8ff" stop-opacity="0.1000"/>
+                <stop offset="0.6143" stop-color="#8fa8ff" stop-opacity="0.0930"/>
+                <stop offset="0.6286" stop-color="#8fa8ff" stop-opacity="0.0862"/>
+                <stop offset="0.6429" stop-color="#8fa8ff" stop-opacity="0.0797"/>
+                <stop offset="0.6571" stop-color="#8fa8ff" stop-opacity="0.0735"/>
+                <stop offset="0.6714" stop-color="#8fa8ff" stop-opacity="0.0675"/>
+                <stop offset="0.6857" stop-color="#8fa8ff" stop-opacity="0.0617"/>
+                <stop offset="0.7000" stop-color="#8fa8ff" stop-opacity="0.0563"/>
+                <stop offset="0.7143" stop-color="#8fa8ff" stop-opacity="0.0510"/>
+                <stop offset="0.7286" stop-color="#8fa8ff" stop-opacity="0.0460"/>
+                <stop offset="0.7429" stop-color="#8fa8ff" stop-opacity="0.0413"/>
+                <stop offset="0.7571" stop-color="#8fa8ff" stop-opacity="0.0369"/>
+                <stop offset="0.7714" stop-color="#8fa8ff" stop-opacity="0.0327"/>
+                <stop offset="0.7857" stop-color="#8fa8ff" stop-opacity="0.0287"/>
+                <stop offset="0.8000" stop-color="#8fa8ff" stop-opacity="0.0250"/>
+                <stop offset="0.8143" stop-color="#8fa8ff" stop-opacity="0.0216"/>
+                <stop offset="0.8286" stop-color="#8fa8ff" stop-opacity="0.0184"/>
+                <stop offset="0.8429" stop-color="#8fa8ff" stop-opacity="0.0154"/>
+                <stop offset="0.8571" stop-color="#8fa8ff" stop-opacity="0.0128"/>
+                <stop offset="0.8714" stop-color="#8fa8ff" stop-opacity="0.0103"/>
+                <stop offset="0.8857" stop-color="#8fa8ff" stop-opacity="0.0082"/>
+                <stop offset="0.9000" stop-color="#8fa8ff" stop-opacity="0.0063"/>
+                <stop offset="0.9143" stop-color="#8fa8ff" stop-opacity="0.0046"/>
+                <stop offset="0.9286" stop-color="#8fa8ff" stop-opacity="0.0032"/>
+                <stop offset="0.9429" stop-color="#8fa8ff" stop-opacity="0.0020"/>
+                <stop offset="0.9571" stop-color="#8fa8ff" stop-opacity="0.0011"/>
+                <stop offset="0.9714" stop-color="#8fa8ff" stop-opacity="0.0005"/>
+                <stop offset="0.9857" stop-color="#8fa8ff" stop-opacity="0.0001"/>
+                <stop offset="1.0000" stop-color="#8fa8ff" stop-opacity="0.0000"/>
               </radialGradient>
             </defs>
-            <circle cx="100" cy="100" r="150" fill="url(#halo)"/>
+            <circle cx="100" cy="100" r="175" fill="url(#halo)"/>
             <g class="ring">
               <ellipse cx="100" cy="100" rx="140" ry="36" transform="rotate(-22 100 100)"/>
               <ellipse class="ring-2" cx="100" cy="100" rx="114" ry="23" transform="rotate(14 100 100)"/>

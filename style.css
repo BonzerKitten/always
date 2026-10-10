@@ -87,7 +87,7 @@ body {
 
 /* ---------- Page frame ---------- */
 .page {
-  --pad-x: clamp(20px, 3.4vw, 64px);   /* --pad-y (set with --cell) is the distance of the bands from the top and bottom of the screen */
+  --pad-x: clamp(20px, 3.4vw, 64px);   /* --edge is the distance of the bands from the top and bottom of the screen */
   position: relative;
   z-index: 1;
   height: 100vh;
@@ -96,7 +96,7 @@ body {
   display: grid;
   grid-template-rows: auto auto minmax(0, 1fr) auto;
   gap: clamp(8px, calc(var(--vh) * 1.6), 20px);
-  padding: var(--pad-y) var(--pad-x);
+  padding: var(--edge) var(--pad-x);
 }
 
 /* ---------- Greek key band ----------
@@ -108,7 +108,7 @@ body {
    which keeps every edge sharp. Change --cell below to make the whole band larger or smaller. */
 /* band.js (when it runs) takes over from --cell: it picks the whole-device-pixel cell nearest to --cell-target, the
    one number to change to make the band larger or smaller. The rules below with --cell are the version without it. */
-:root { --cell-target: 2px; --band-img: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 42 10' preserveAspectRatio='none' fill='none' stroke='%23ffe9b0' shape-rendering='crispEdges'%3E%3Cpath d='M0 .5H42M0 9.5H42'/%3E%3Cpath transform='translate(0.5 2.5)' stroke-linecap='square' stroke-linejoin='miter' d='M2 3V2H4V5H0V0H6V5H12V0H8V3H10V2'/%3E%3Cpath transform='translate(14.5 2.5)' stroke-linecap='square' stroke-linejoin='miter' d='M2 3V2H4V5H0V0H6V5H12V0H8V3H10V2'/%3E%3Cpath transform='translate(28.5 2.5)' stroke-linecap='square' stroke-linejoin='miter' d='M2 3V2H4V5H0V0H6V5H12V0H8V3H10V2'/%3E%3C/svg%3E"); --tile-h: calc(10 * var(--cell)); --cell: 2px; --dev: 1px; --band-h: calc(10 * var(--cell)); --pad-y: var(--band-h); }   /* --dev is one device pixel, used to put the band on whole device pixels */
+:root { --cell-target: 2px; --band-img: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 42 10' preserveAspectRatio='none' fill='none' stroke='%23ffe9b0' shape-rendering='crispEdges'%3E%3Cpath d='M0 .5H42M0 9.5H42'/%3E%3Cpath transform='translate(0.5 2.5)' stroke-linecap='square' stroke-linejoin='miter' d='M2 3V2H4V5H0V0H6V5H12V0H8V3H10V2'/%3E%3Cpath transform='translate(14.5 2.5)' stroke-linecap='square' stroke-linejoin='miter' d='M2 3V2H4V5H0V0H6V5H12V0H8V3H10V2'/%3E%3Cpath transform='translate(28.5 2.5)' stroke-linecap='square' stroke-linejoin='miter' d='M2 3V2H4V5H0V0H6V5H12V0H8V3H10V2'/%3E%3C/svg%3E"); --tile-h: calc(10 * var(--cell)); --cell: 2px; --dev: 1px; --band-h: calc(10 * var(--cell)); --edge-cells: 2; --edge: calc(var(--cell) * var(--edge-cells)); }   /* the bands sit this many cells (2 = 2 x 2 px on a PC) from the top and bottom edge of the screen */   /* --dev is one device pixel, used to put the band on whole device pixels */
 @media (min-resolution: 1.4dppx) and (max-resolution: 1.6dppx) { :root { --dev: calc(2px / 3); } }
 @media (min-resolution: 1.9dppx) and (max-resolution: 2.1dppx) { :root { --dev: 0.5px; } }
 @media (min-resolution: 2.9dppx) { :root { --dev: calc(1px / 3); } }
@@ -135,7 +135,8 @@ body {
 /* Extra air between each band and the content next to it, growing with the screen height. */
 .meander:first-child { margin-bottom: var(--band-air); }
 .meander:last-child { margin-top: var(--band-air); }
-.page { --band-air: clamp(6px, calc(var(--vh) * 1.4), 18px); }
+/* The room the bands gave up at the screen edge is shared: half goes to the space next to the band, half stays with the page. */
+.page { --band-air: calc(clamp(6px, calc(var(--vh) * 1.4), 18px) + (var(--band-h) - var(--edge)) / 2); }
 
 /* ---------- Title ---------- */
 header { text-align: center; }
@@ -298,8 +299,8 @@ main {
     min-height: 100dvh;
     --pad-x: 20px;
     --cell-target: 1.5px;
-    --band-air: clamp(4px, calc(var(--vh) * 1), 12px);
-    padding: var(--pad-y) var(--pad-x);
+    --band-air: calc(clamp(4px, calc(var(--vh) * 1), 12px) + (var(--band-h) - var(--edge)) / 2);
+    padding: var(--edge) var(--pad-x);
     gap: clamp(4px, calc(var(--vh) * 1), 8px);
     display: flex;
     flex-direction: column;
