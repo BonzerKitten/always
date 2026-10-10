@@ -52,6 +52,8 @@
   // The window onto the planet when zoomed in.
   const FEATHER_SHARE = 0.22;       // width of the soft edge, as a share of the lens radius
   const FEATHER_ZOOM_SPAN = 0.6;    // the soft edge grows from nothing over this much zoom after the minimum
+  const GRIP_ZOOM_SPAN = 0.5;       // dragging holds the grabbed spot under the pointer fully from this much zoom after the minimum
+  const PIN_WINDOW_ZOOM_SPAN = 0.25; // pins are fully held inside the lens from this much zoom after the minimum
   const RING_FADE_ZOOM_SPAN = 0.4;  // the orbit rings fade out over this much zoom after the minimum
   const HALO_FADE = 0.6;            // the halo around the globe loses this share of its strength
 
@@ -377,19 +379,31 @@
 
   // 0 when fully zoomed out (the crisp edge of the globe), up to 1 when the soft edge is fully grown.
   function featherAmount() { return smoothRange(zoom, 1, 1 + FEATHER_ZOOM_SPAN); }
-  function featherWidth() { return Math.max(1, FEATHER_SHARE * lensRadius * featherAmount()); }
+  function featherWidth() { return 0.5 + FEATHER_SHARE * lensRadius * featherAmount(); }
 
-  // How much of what is drawn at this spot of the canvas is still visible (the soft edge fades it out).
+  /*
+   * Nothing changes in one step when the visitor starts to zoom: the lens edge for the planet starts one pixel
+   * outside the globe's rim (room for the rim line, which is the globe's edge at minimum zoom) and closes in on the
+   * lens, while the rim fades; the window for the pins starts beyond the whole canvas (pins sit on the rim, half
+   * outside the globe, at minimum zoom) and closes in on the lens over PIN_WINDOW_ZOOM_SPAN of zoom.
+   */
+  function planetEdge() { return lensRadius + 1 - featherAmount(); }
+  function pinEdge() {
+    return lensRadius + (side * 0.75 - lensRadius) * (1 - smoothRange(zoom, 1, 1 + PIN_WINDOW_ZOOM_SPAN));
+  }
+
+  // How much of a pin at this spot of the canvas is still visible (the soft edge of the lens fades it out).
   function lensVisibility(x, y) {
     if (zoom <= 1) return 1;
     const distance = Math.hypot(x - side / 2, y - side / 2);
-    return 1 - smoothRange(distance, lensRadius - featherWidth(), lensRadius);
+    return 1 - smoothRange(distance, pinEdge() - featherWidth(), pinEdge());
   }
 
-  // Hides everything outside the lens, with a soft edge, by keeping only what lies under a fading circle.
+  // Hides the planet outside the lens, with a soft edge, by keeping only what lies under a fading circle.
   function applyLens(centre) {
     if (zoom <= 1) return;
-    const fade = ctx.createRadialGradient(centre, centre, lensRadius - featherWidth(), centre, centre, lensRadius);
+    const edge = planetEdge();
+    const fade = ctx.createRadialGradient(centre, centre, edge - featherWidth(), centre, centre, edge);
     const STOPS = 8;
     for (let i = 0; i <= STOPS; i++) fade.addColorStop(i / STOPS, 'rgba(0, 0, 0, ' + (1 - smooth(i / STOPS)).toFixed(4) + ')');
     ctx.globalCompositeOperation = 'destination-in';
@@ -865,7 +879,13 @@
     return moving;
   }
 
-  function drawPins() {
+  function drawPins(centre) {
+    ctx.save();
+    if (zoom > 1) {
+      ctx.beginPath();
+      ctx.arc(centre, centre, pinEdge(), 0, TWO_PI);
+      ctx.clip();
+    }
     ctx.shadowColor = PIN_GLOW;
     ctx.shadowBlur = 9 * pixelRatio;
     nodes.forEach((node) => {
@@ -875,7 +895,7 @@
       const shown = node.weight;
       const scale = (0.7 + 0.3 * shown) * (isGroup ? GROUP_PIN_SCALE : 1);
       const size = (pinSize() + (activePinSize() - pinSize()) * grow) * scale;
-      ctx.globalAlpha = Math.min(1, (node.z - PIN_MIN_Z) * 6) * shown;
+      ctx.globalAlpha = Math.min(1, (node.z - PIN_MIN_Z) * 6) * shown * lensVisibility(node.x, node.y);
       ctx.fillStyle = PIN_COLOR;
       sparklePath(node.x, node.y, size);
       ctx.fill();
@@ -889,9 +909,7 @@
         ctx.stroke();
       }
     });
-    ctx.globalAlpha = 1;
-    ctx.shadowBlur = 0;
-    ctx.shadowColor = 'transparent';
+    ctx.restore();
   }
 
   // The number of places in a group, to the right of its pin (and of its ring, once it is the active one).
@@ -940,8 +958,8 @@
     drawGrid();
     drawLand();
     drawRim(centre);
-    drawPins();
     applyLens(centre);
+    drawPins(centre);
     updateLeader();
     if (animating) requestDraw();   // frames are drawn only while something is changing
   }
@@ -1214,6 +1232,7 @@
 
   const touches = new Map();     // the fingers (or the mouse button) now down: pointer id -> { x, y } in client pixels
   let dragId = null;             // the pointer that is turning the globe
+  let dragSpot = null;           // the spot of the Earth it grabbed
   let pinch = null;              // while two fingers are down: the zoom and the spot of the Earth they started on
   let lastX = 0, lastY = 0, lastTime = 0;
   let travelled = 0;
@@ -1227,6 +1246,24 @@
   function dragToTurn(dx, dy) {
     const eastWestScale = 1 / Math.max(Math.cos(centerLat), 0.5);
     return [(-dx / planetRadius()) * eastWestScale, dy / planetRadius()];
+  }
+
+  function wrapAngle(angle) { return ((angle + Math.PI * 3) % TWO_PI) - Math.PI; }
+
+  /*
+   * Turns the globe for a drag. Zoomed out, the globe turns by the amount above (today's feel). Zoomed in, the
+   * spot that was grabbed is kept under the pointer exactly, at any latitude; in between the two are blended.
+   */
+  function turnByDrag(deltaLon, deltaLat, clientX, clientY) {
+    let lon = centerLon + deltaLon, lat = centerLat + deltaLat;
+    const grip = smoothRange(zoom, 1, 1 + GRIP_ZOOM_SPAN);
+    if (grip > 0) {
+      const box = canvas.getBoundingClientRect();
+      turnPointTo(dragSpot.point, clientX - box.left - side / 2, side / 2 - (clientY - box.top), planetRadius());
+      lon += grip * wrapAngle(centerLon - lon);
+      lat += grip * (centerLat - lat);
+    }
+    setCenter(lon, lat);
   }
 
   function pinNear(x, y, reach) {
@@ -1278,6 +1315,8 @@
   }
 
   function startDrag(id, x, y, time) {
+    const box = canvas.getBoundingClientRect();
+    dragSpot = grab(x - box.left, y - box.top);
     dragId = id;
     lastX = x;
     lastY = y;
@@ -1346,10 +1385,13 @@
     lastY = event.clientY;
     lastTime = event.timeStamp;
     if (travelled < TAP_MOVE_LIMIT) return;
-    const [deltaLon, deltaLat] = dragToTurn(dx, dy);
+    const [wantedLon, wantedLat] = dragToTurn(dx, dy);
+    const fromLon = centerLon, fromLat = centerLat;
+    turnByDrag(wantedLon, wantedLat, event.clientX, event.clientY);
+    const deltaLon = wrapAngle(centerLon - fromLon), deltaLat = centerLat - fromLat;
     speedLon = 0.6 * (deltaLon / elapsed) + 0.4 * speedLon;
     speedLat = 0.6 * (deltaLat / elapsed) + 0.4 * speedLat;
-    rotateBy(deltaLon, deltaLat);
+    requestDraw();
   });
 
   function endPointer(event) {
