@@ -53,11 +53,14 @@ function nextAnniversary(start, today) {
 }
 
 // How today stands against the "equal day": the day when the time since you met equals
-// the time he had lived before meeting you. Returns before, today or after, and how many days apart.
+// the time he had lived before meeting you. Returns before, today or after.
+// before: days counts down to the first day on which you have lived longer with each other
+//   than without (the day after the equal day). today: the equal day itself.
+//   after: days counts up from 1 on that first day.
 function halfOfLifeStatus(met, birth, today) {
   const equalDayNumber = dayNumber(met) + daysBetween(birth, met);
   const remaining = equalDayNumber - dayNumber(today);
-  if (remaining > 0) return { state: 'before', days: remaining };
+  if (remaining > 0) return { state: 'before', days: remaining + 1 };
   if (remaining === 0) return { state: 'today', days: 0 };
   return { state: 'after', days: -remaining };
 }

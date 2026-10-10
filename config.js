@@ -49,18 +49,20 @@ const SITE = {
     // On the anniversary day itself.
     anniversaryToday: { big: 'Hoje', label: 'fazemos {anos}' },
 
-    // The day you will have known each other for more than half of his life.
-    // Before that day:
+    // The "half of life" counter has three states. The "equal day" is the day when the time since you met
+    // equals the time he had lived before meeting you.
+    // 1) Before the equal day: counts down to the first day on which he has lived more time with you than
+    //    without you (the day after the equal day).
     halfBefore: {
-      one: 'dia para eu te conhecer há mais da metade da minha vida',
-      other: 'dias para eu te conhecer há mais da metade da minha vida',
+      one: 'dia para eu ter vivido mais tempo com você do que sem você',
+      other: 'dias para eu ter vivido mais tempo com você do que sem você',
     },
-    // On that day:
-    halfToday: { big: 'Hoje', label: 'te conheço há exatamente metade da minha vida' },
-    // After that day:
+    // 2) On the equal day itself: the big word and a line under it, instead of a number.
+    halfToday: { big: 'Hoje', label: 'metade da minha vida é com você' },
+    // 3) From the day after the equal day on: counts the days, starting at 1.
     halfAfter: {
-      one: 'dia desde que te conheço há mais da metade da minha vida',
-      other: 'dias desde que te conheço há mais da metade da minha vida',
+      one: 'dia vivendo mais tempo com você do que sem você',
+      other: 'dias vivendo mais tempo com você do que sem você',
     },
   },
 
