@@ -1,7 +1,10 @@
 /*
- * The globe: a canvas drawing of the Earth that the visitor turns by dragging.
+ * The globe: a canvas drawing of the Earth that the visitor turns by dragging and zooms with the wheel or a pinch.
  * No library. It uses an orthographic projection (the Earth as seen from far away),
- * land outlines from land.js, and the places listed in config.js.
+ * land outlines from land.js (and, once the visitor zooms in, the finer land-detail.js), and the places listed in config.js.
+ *
+ * The "lens" is the round area the globe has when it is fully zoomed out. Zooming in makes the planet larger than
+ * the lens; everything outside the lens is hidden behind a soft edge, so the page around it stays clean.
  */
 (function startGlobe() {
   'use strict';
@@ -15,7 +18,6 @@
 
   const MAX_TILT = 75 * DEG;        // how far the globe may tip towards a pole
   const MAX_EDGE_STEP = 2;          // degrees; long map edges are split so they curve with the globe
-  const GRID_STEP = 20;             // degrees between grid lines
   const ARC_STEP = 4 * DEG;         // smoothness of the globe's rim when land is cut at the edge
   const PIN_MIN_Z = 0.05;           // a pin must face the viewer at least this much to count as visible
   const TAP_MOVE_LIMIT = 6;         // pixels; moving less than this is a tap, not a drag
@@ -23,7 +25,34 @@
   const STOP_SPEED = 0.00002;       // radians per millisecond
   const EASE_MS = 330;              // how long a pin takes to grow into (or out of) the active look
   const FADE_OUT_MS = 220;          // the caption fades out this long before its text changes
-  const SWITCH_MARGIN = 4 * DEG;    // another pin must be this much nearer the centre before it takes over
+  const SWITCH_MARGIN = 0.07;       // another pin must be this much nearer the centre (share of the lens radius) to take over
+
+  // Zooming.
+  const ZOOM_CAP = 1000;            // the deepest zoom, whatever the places are
+  const ZOOM_FLOOR = 12;            // the deepest zoom is never less than this, even when all places are far apart
+  const SEPARATE_AT_MAX_PX = 52;    // at the deepest zoom the two closest places are at least this far apart on screen
+  const ZOOM_EASE_MS = 90;          // wheel zooming glides towards its goal; this is the time constant of the glide
+  const WHEEL_SPEED = 0.0022;       // zoom (as a power of e) per pixel of wheel movement; one mouse notch is about x1.25
+  const PINCH_WHEEL_SPEED = 0.01;   // a trackpad pinch arrives as small wheel steps with the control key held
+  const GRID_STEPS = [20, 10, 5, 2, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001];   // degrees between grid lines
+  const GRID_SHOW_FROM = 0.1;       // a finer grid fades in when its lines are this far apart (share of the lens width) ...
+  const GRID_SHOW_TO = 0.18;        // ... and is fully there at this spacing
+
+  // The window onto the planet when zoomed in.
+  const FEATHER_SHARE = 0.22;       // width of the soft edge, as a share of the lens radius
+  const FEATHER_ZOOM_SPAN = 0.6;    // the soft edge grows from nothing over this much zoom after the minimum
+  const RING_FADE_ZOOM_SPAN = 0.4;  // the orbit rings fade out over this much zoom after the minimum
+
+  // Coastline detail: the fine land fades in between these zoom levels, once it has loaded.
+  const DETAIL_ZOOM_FROM = 2;
+  const DETAIL_ZOOM_TO = 3.5;
+  const DETAIL_FADE_MS = 500;
+
+  // Land is cut into short runs of points with a bounding cap, so runs far from the view are skipped quickly.
+  const CHUNK_POINTS = 32;
+  const CHUNK_REACH = Math.cos(1 * DEG);   // a run also ends when it has wandered this far from where it began
+  const CULL_PAD_PX = 4;
+  const CHUNK_SAG = 4e-4;                  // a skipped run is replaced by a straight chord, which sags this much (share of the radius)
 
   // Colours of the starlight (the same warm tones as style.css).
   const PIN_COLOR = '#ffe38a';
@@ -39,6 +68,10 @@
   const ctx = canvas.getContext('2d');
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
+  function clamp(value, low, high) { return Math.max(low, Math.min(high, value)); }
+  function smooth(t) { return t * t * (3 - 2 * t); }
+  function smoothRange(value, from, to) { return smooth(clamp((value - from) / (to - from), 0, 1)); }
+
   // ---------- Geometry ----------
 
   // A point on the globe as a unit vector: x towards (0, 0), y towards (0, 90 east), z towards the north pole.
@@ -51,63 +84,41 @@
   const SAME_POINT = 1e-9;
 
   /*
-   * Turns a ring of [lon, lat, lon, lat...] into unit vectors, adding points along long edges.
-   * seamAfter[i] is true when the edge leaving point i runs along the 180 degree meridian. Natural Earth
+   * Turns a ring of [lon, lat, lon, lat...] into unit vectors (flat: x, y, z, x, y, z...), adding points along
+   * long edges. seam[i] is 1 when the edge leaving point i runs along the 180 degree meridian. Natural Earth
    * cuts land there to fit a flat map, so those edges are needed for the fill but are not coast.
    */
   function ringToPoints(flat) {
-    const vectors = [];
-    const seamAfter = [];
+    const vec = [];
+    const seam = [];
     const count = flat.length / 2;
     for (let i = 0; i < count; i++) {
       const j = (i + 1) % count;
       const lon1 = flat[2 * i], lat1 = flat[2 * i + 1];
       const lon2 = flat[2 * j], lat2 = flat[2 * j + 1];
-      const isSeam = Math.abs(lon1) === 180 && Math.abs(lon2) === 180;
+      const isSeam = Math.abs(lon1) === 180 && Math.abs(lon2) === 180 ? 1 : 0;
       const wrapsAroundPole = Math.abs(lon2 - lon1) > 180; // from lon 180 to -180: the same line on the globe
       const steps = wrapsAroundPole
         ? 1
         : Math.max(1, Math.ceil(Math.max(Math.abs(lon2 - lon1), Math.abs(lat2 - lat1)) / MAX_EDGE_STEP));
       for (let s = 0; s < steps; s++) {
         const t = s / steps;
-        const vector = toVector(lon1 + (lon2 - lon1) * t, lat1 + (lat2 - lat1) * t);
-        const last = vectors[vectors.length - 1];
-        if (last && Math.hypot(vector[0] - last[0], vector[1] - last[1], vector[2] - last[2]) < SAME_POINT) {
-          seamAfter[seamAfter.length - 1] = isSeam; // the same point twice (lon 180 and -180): keep one
+        const v = toVector(lon1 + (lon2 - lon1) * t, lat1 + (lat2 - lat1) * t);
+        const last = seam.length - 1;
+        if (last >= 0 && Math.hypot(v[0] - vec[3 * last], v[1] - vec[3 * last + 1], v[2] - vec[3 * last + 2]) < SAME_POINT) {
+          seam[last] = isSeam; // the same point twice (lon 180 and -180): keep one
         } else {
-          vectors.push(vector);
-          seamAfter.push(isSeam);
+          vec.push(v[0], v[1], v[2]);
+          seam.push(isSeam);
         }
       }
     }
-    const first = vectors[0], last = vectors[vectors.length - 1];
-    if (vectors.length > 1 && Math.hypot(first[0] - last[0], first[1] - last[1], first[2] - last[2]) < SAME_POINT) {
-      vectors.pop();
-      seamAfter.pop();
+    const last = seam.length - 1;
+    if (last > 0 && Math.hypot(vec[0] - vec[3 * last], vec[1] - vec[3 * last + 1], vec[2] - vec[3 * last + 2]) < SAME_POINT) {
+      vec.length -= 3;
+      seam.pop();
     }
-    return { vectors, seamAfter };
-  }
-
-  // Splits a ring into the open pieces of real coast, leaving out the seam edges.
-  function coastPieces(vectors, seamAfter) {
-    const total = vectors.length;
-    const firstSeam = seamAfter.indexOf(true);
-    if (firstSeam === -1) return null;
-    const pieces = [];
-    let piece = [];
-    for (let step = 1; step <= total; step++) {
-      const index = (firstSeam + step) % total;
-      piece.push(vectors[index]);
-      if (seamAfter[index]) {
-        if (piece.length > 1) pieces.push(piece);
-        piece = [];
-      }
-    }
-    return pieces;
-  }
-
-  function makeLine(vectors, closed) {
-    return { vectors, closed, view: vectors.map(() => [0, 0, 0]) };
+    return { vec, seam };
   }
 
   // Drawn on a flat map, land rings run clockwise and the rare lake rings (the Caspian Sea) run anticlockwise.
@@ -121,31 +132,86 @@
   }
 
   /*
-   * Each land ring has a closed outline for the fill, and (only when it has seam edges)
-   * separate open coast lines for the stroke.
+   * Everything a land ring needs for drawing: its points on the globe, which edges are seam edges, and its bounding
+   * caps. A cap is a circle on the globe (centre vector and radius) that holds some points. The ring has one for
+   * itself and one for each short run of its points ("chunk"), so far-away parts can be skipped without a look.
+   * The ring is turned so that it starts just after a seam edge: a piece of coast never wraps round the start.
    */
-  const landRings = LAND_RINGS.map((flat) => {
-    const { vectors, seamAfter } = ringToPoints(flat);
-    const pieces = coastPieces(vectors, seamAfter);
-    return {
-      outline: makeLine(vectors, true),
-      coastLines: pieces && pieces.map((piece) => makeLine(piece, false)),
-      isLake: isLakeRing(flat),
-    };
-  });
+  function buildRing(flat) {
+    let { vec, seam } = ringToPoints(flat);
+    const count = seam.length;
+    const firstSeam = seam.indexOf(1);
+    const hasSeam = firstSeam !== -1;
+    if (hasSeam && firstSeam !== count - 1) {
+      const from = firstSeam + 1;
+      vec = vec.slice(3 * from).concat(vec.slice(0, 3 * from));
+      seam = seam.slice(from).concat(seam.slice(0, from));
+    }
 
-  // The faint grid: meridians (open lines from pole to pole) and parallels (closed circles).
-  const gridLines = [];
-  for (let lon = -180; lon < 180; lon += GRID_STEP) {
-    const vectors = [];
-    for (let lat = -90; lat <= 90; lat += 3) vectors.push(toVector(lon, lat));
-    gridLines.push(makeLine(vectors, false));
+    const chunkStart = [0];
+    const caps = [];
+    let first = 0;
+    for (let i = 1; i <= count; i++) {
+      const k = 3 * (i % count);
+      const wandered = vec[3 * first] * vec[k] + vec[3 * first + 1] * vec[k + 1] + vec[3 * first + 2] * vec[k + 2] < CHUNK_REACH;
+      if (i < count && i - first < CHUNK_POINTS && !wandered) continue;
+      caps.push(...capOf(vec, first, i, count));
+      if (i < count) chunkStart.push(i);
+      first = i;
+    }
+    chunkStart.push(count);
+
+    return {
+      count,
+      vec: Float64Array.from(vec),
+      seam: Uint8Array.from(seam),
+      hasSeam,
+      isLake: isLakeRing(flat),
+      chunkStart: Int32Array.from(chunkStart),
+      caps: Float64Array.from(caps),
+      cap: capOf(vec, 0, count - 1, count),
+    };
   }
-  for (let lat = -80; lat <= 80; lat += GRID_STEP) {
-    const vectors = [];
-    for (let lon = -180; lon < 180; lon += 3) vectors.push(toVector(lon, lat));
-    gridLines.push(makeLine(vectors, true));
+
+  // The circle (around the points' average direction) that holds the points from..to, both included.
+  // Returns centre x, y, z, then the radius and its cosine and sine.
+  function capOf(vec, from, to, count) {
+    let sx = 0, sy = 0, sz = 0;
+    for (let i = from; i <= to; i++) {
+      const k = 3 * (i % count);
+      sx += vec[k]; sy += vec[k + 1]; sz += vec[k + 2];
+    }
+    const length = Math.hypot(sx, sy, sz);
+    if (length < 1e-6) return [1, 0, 0, Math.PI, -1, 0];   // points all around the globe: never skipped
+    sx /= length; sy /= length; sz /= length;
+    let least = 1;
+    for (let i = from; i <= to; i++) {
+      const k = 3 * (i % count);
+      least = Math.min(least, sx * vec[k] + sy * vec[k + 1] + sz * vec[k + 2]);
+    }
+    const radius = Math.acos(clamp(least, -1, 1));
+    return [sx, sy, sz, radius, Math.cos(radius), Math.sin(radius)];
   }
+
+  const coarseRings = LAND_RINGS.map((flat) => buildRing(flat));
+
+  // The finer land arrives later (see requestDetail), as another set of rings.
+  const detail = { state: 'idle', rings: [], fade: 0 };
+
+  // Scratch space for cutting one ring or line at a time, large enough for the longest one, so nothing is
+  // allocated for every point of every frame.
+  let scratchSize = 0;
+  let viewX, viewY, viewZ, edgeSeam;
+  function growScratch(rings) {
+    const longest = rings.reduce((most, ring) => Math.max(most, ring.count), 130);
+    if (longest <= scratchSize) return;
+    scratchSize = longest;
+    viewX = new Float64Array(longest);
+    viewY = new Float64Array(longest);
+    viewZ = new Float64Array(longest);
+    edgeSeam = new Uint8Array(longest);
+  }
+  growScratch(coarseRings);
 
   const places = SITE.places.map((place) => ({
     place,
@@ -162,79 +228,192 @@
 
   let centerLon = SITE.globeStart.lon * DEG;   // the point of the Earth facing the viewer
   let centerLat = SITE.globeStart.lat * DEG;
-  let side = 0;       // canvas size in CSS pixels
-  let radius = 0;     // globe radius in CSS pixels
+  let cosLon = 1, sinLon = 0, cosLat = 1, sinLat = 0;
+  let zoom = 1;            // 1 = the whole globe fills the lens; larger = closer
+  let zoomGoal = 1;        // where a wheel zoom is gliding to
+  let zoomMax = ZOOM_FLOOR;
+  let anchor = null;       // while zooming: the spot of the Earth that must stay under the pointer
+  let side = 0;            // canvas size in CSS pixels
+  let lensRadius = 0;      // radius of the lens in CSS pixels (the globe's radius when fully zoomed out)
   let pixelRatio = 1;
   let activeIndex = -1;
   let drawQueued = false;
-  let animating = false;     // some pin is still easing, so the next frame is needed
+  let animating = false;     // something is still moving, so the next frame is needed
+  let viewChanged = true;    // the view moved since the active place was last chosen
   let lastFrameTime = 0;
 
+  function planetRadius() { return lensRadius * zoom; }
+
+  function setCenter(lon, lat) {
+    centerLon = ((lon + Math.PI * 3) % TWO_PI) - Math.PI;
+    centerLat = clamp(lat, -MAX_TILT, MAX_TILT);
+    cosLon = Math.cos(centerLon);
+    sinLon = Math.sin(centerLon);
+    cosLat = Math.cos(centerLat);
+    sinLat = Math.sin(centerLat);
+    viewChanged = true;
+  }
+
+  function setZoom(value) {
+    zoom = clamp(value, 1, zoomMax);
+    viewChanged = true;
+  }
+  setCenter(centerLon, centerLat);
+
   /*
-   * Turns the Earth so that (centerLon, centerLat) faces the viewer, and writes each
-   * vector's position into "view": view[0] is right, view[1] is up, view[2] is towards the viewer.
-   * A point is on the visible side exactly when view[2] > 0.
+   * Turns the Earth so that (centerLon, centerLat) faces the viewer, and writes the point's position into "out":
+   * out[0] is right, out[1] is up, out[2] is towards the viewer.
+   * A point is on the visible side exactly when out[2] > 0.
    */
-  function turnToView(vectors, view) {
-    const cosLon = Math.cos(centerLon), sinLon = Math.sin(centerLon);
-    const cosLat = Math.cos(centerLat), sinLat = Math.sin(centerLat);
-    for (let i = 0; i < vectors.length; i++) {
-      const [x, y, z] = vectors[i];
-      const towardsCenterMeridian = x * cosLon + y * sinLon;
-      const east = -x * sinLon + y * cosLon;
-      const out = view[i];
-      out[0] = east;
-      out[1] = z * cosLat - towardsCenterMeridian * sinLat;
-      out[2] = z * sinLat + towardsCenterMeridian * cosLat;
+  function turnPoint(x, y, z, out) {
+    const towardsCenterMeridian = x * cosLon + y * sinLon;
+    out[0] = -x * sinLon + y * cosLon;
+    out[1] = z * cosLat - towardsCenterMeridian * sinLat;
+    out[2] = z * sinLat + towardsCenterMeridian * cosLat;
+  }
+
+  // The point of the Earth (a unit vector) that is seen "right" and "up" pixels from the middle of the canvas.
+  function earthAt(right, up, radius) {
+    let east = right / radius, north = up / radius;
+    const reach = Math.hypot(east, north);
+    if (reach > 0.9999) {   // beyond the planet's edge: the nearest point on the edge
+      east *= 0.9999 / reach;
+      north *= 0.9999 / reach;
     }
+    const toward = Math.sqrt(1 - east * east - north * north);
+    const towardsCenterMeridian = -north * sinLat + toward * cosLat;
+    return [
+      towardsCenterMeridian * cosLon - east * sinLon,
+      towardsCenterMeridian * sinLon + east * cosLon,
+      north * cosLat + toward * sinLat,
+    ];
+  }
+
+  // Turns the globe so that the point of the Earth (a unit vector) is seen "right" and "up" pixels from the middle of the canvas.
+  function turnPointTo(point, right, up, radius) {
+    let east = right / radius, north = up / radius;
+    const reach = Math.hypot(east, north);
+    if (reach > 0.9999) {
+      east *= 0.9999 / reach;
+      north *= 0.9999 / reach;
+    }
+    const toward = Math.sqrt(1 - east * east - north * north);
+    const pointLat = Math.asin(clamp(point[2], -1, 1));
+    const acrossLon = Math.asin(clamp(east / Math.max(Math.cos(pointLat), 1e-9), -1, 1));   // how far east of the middle the point lies
+    const towardsCenterMeridian = Math.cos(pointLat) * Math.cos(acrossLon);
+    setCenter(
+      Math.atan2(point[1], point[0]) - acrossLon,
+      Math.atan2(point[2], towardsCenterMeridian) - Math.atan2(north, toward)
+    );
+  }
+
+  // ---------- The lens ----------
+
+  // 0 when fully zoomed out (the crisp edge of the globe), up to 1 when the soft edge is fully grown.
+  function featherAmount() { return smoothRange(zoom, 1, 1 + FEATHER_ZOOM_SPAN); }
+  function featherWidth() { return Math.max(1, FEATHER_SHARE * lensRadius * featherAmount()); }
+
+  // How much of what is drawn at this spot of the canvas is still visible (the soft edge fades it out).
+  function lensVisibility(x, y) {
+    if (zoom <= 1) return 1;
+    const distance = Math.hypot(x - side / 2, y - side / 2);
+    return 1 - smoothRange(distance, lensRadius - featherWidth(), lensRadius);
+  }
+
+  // Hides everything outside the lens, with a soft edge, by keeping only what lies under a fading circle.
+  function applyLens(centre) {
+    if (zoom <= 1) return;
+    const fade = ctx.createRadialGradient(centre, centre, lensRadius - featherWidth(), centre, centre, lensRadius);
+    const STOPS = 8;
+    for (let i = 0; i <= STOPS; i++) fade.addColorStop(i / STOPS, 'rgba(0, 0, 0, ' + (1 - smooth(i / STOPS)).toFixed(4) + ')');
+    ctx.globalCompositeOperation = 'destination-in';
+    ctx.fillStyle = fade;
+    ctx.fillRect(0, 0, side, side);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+
+  // The orbit rings around the globe belong to the whole planet: they fade out as the visitor zooms in.
+  let ringOpacity = 1;
+  function updateRings() {
+    const opacity = 1 - smoothRange(zoom, 1, 1 + RING_FADE_ZOOM_SPAN);
+    if (opacity === ringOpacity) return;
+    ringOpacity = opacity;
+    globeBox.style.setProperty('--ring-opacity', opacity.toFixed(3));
   }
 
   // ---------- Cutting lines at the edge of the globe ----------
 
+  // What is in view this frame: the circle on the globe (around the view's centre) that the lens can show.
+  const cone = { x: 1, y: 0, z: 0, angle: 0, cos: 1, sin: 0 };
+  function updateCone() {
+    const reach = lensRadius + CULL_PAD_PX + planetRadius() * CHUNK_SAG;
+    cone.angle = Math.asin(Math.min(1, reach / planetRadius()));
+    cone.cos = Math.cos(cone.angle);
+    cone.sin = Math.sin(cone.angle);
+    cone.x = cosLat * cosLon;
+    cone.y = cosLat * sinLon;
+    cone.z = sinLat;
+  }
+
+  // True when a cap (centre x, y, z, then radius, cosine and sine) lies wholly outside what is in view.
+  function capOutsideView(x, y, z, radius, cosRadius, sinRadius) {
+    if (cone.angle + radius >= Math.PI) return false;
+    return x * cone.x + y * cone.y + z * cone.z < cone.cos * cosRadius - cone.sin * sinRadius;
+  }
+
+  // A chain is a visible piece of a line: canvas positions (x, y, x, y...) and, per point, whether the edge leaving it is a seam edge.
+  function newChain() { return { xy: [], seam: [] }; }
+
+  function addToChain(chain, right, up, isSeam) {
+    chain.xy.push(side / 2 + planetRadius() * right, side / 2 - planetRadius() * up);
+    chain.seam.push(isSeam);
+  }
+
   /*
-   * Returns the visible pieces of a line as chains of canvas points.
+   * Returns the visible pieces of the line held in the scratch arrays (count points, seen from the viewer).
    * Where a line crosses the edge of the disc (view z = 0) it is cut exactly on the rim.
    * "hidden" says whether any part of the line was cut off.
    */
-  function visibleChains(line) {
-    const view = line.view;
-    const total = view.length;
+  function visibleChains(count, closed) {
     let firstHidden = -1;
     let visibleCount = 0;
-    for (let i = 0; i < total; i++) {
-      if (view[i][2] > 0) visibleCount++;
+    for (let i = 0; i < count; i++) {
+      if (viewZ[i] > 0) visibleCount++;
       else if (firstHidden === -1) firstHidden = i;
     }
-    if (visibleCount === total) {
-      return { chains: [view.map((v) => toCanvas(v))], hidden: false };
-    }
     if (visibleCount === 0) return { chains: [], hidden: true };
+    if (visibleCount === count) {
+      const chain = newChain();
+      for (let i = 0; i < count; i++) addToChain(chain, viewX[i], viewY[i], edgeSeam[i]);
+      return { chains: [chain], hidden: false };
+    }
 
     // A closed ring starts at a hidden point, so no piece wraps around the start of the list.
-    const start = line.closed ? firstHidden : 0;
-    const count = line.closed ? total + 1 : total;
+    const start = closed ? firstHidden : 0;
+    const steps = closed ? count + 1 : count;
     const chains = [];
     let chain = null;
-    let previous = null;
-    for (let step = 0; step < count; step++) {
-      const current = view[(start + step) % total];
-      const currentVisible = current[2] > 0;
-      if (previous) {
-        const previousVisible = previous[2] > 0;
+    let previous = -1;
+    for (let step = 0; step < steps; step++) {
+      const current = (start + step) % count;
+      const currentVisible = viewZ[current] > 0;
+      if (previous !== -1) {
+        const previousVisible = viewZ[previous] > 0;
         if (previousVisible !== currentVisible) {
-          const rimPoint = toCanvas(crossingOnRim(previous, current));
+          crossingOnRim(previous, current);
           if (currentVisible) {
-            chain = [rimPoint];
+            chain = newChain();
+            addToChain(chain, rimPoint[0], rimPoint[1], edgeSeam[previous]);
           } else {
-            chain.push(rimPoint);
+            addToChain(chain, rimPoint[0], rimPoint[1], 0);
             chains.push(chain);
             chain = null;
           }
         }
       }
       if (currentVisible) {
-        if (!chain) chain = [];
-        chain.push(toCanvas(current));
+        if (!chain) chain = newChain();
+        addToChain(chain, viewX[current], viewY[current], edgeSeam[current]);
       }
       previous = current;
     }
@@ -242,17 +421,15 @@
     return { chains, hidden: true };
   }
 
-  function toCanvas(v) {
-    return [side / 2 + radius * v[0], side / 2 - radius * v[1]];
-  }
-
-  // Where the straight step from a to b (one in front, one behind) passes through z = 0, pushed onto the rim.
+  // Where the straight step from point a to point b (one in front, one behind) passes through z = 0, pushed onto the rim.
+  const rimPoint = [0, 0];
   function crossingOnRim(a, b) {
-    const t = a[2] / (a[2] - b[2]);
-    const x = a[0] + (b[0] - a[0]) * t;
-    const y = a[1] + (b[1] - a[1]) * t;
+    const t = viewZ[a] / (viewZ[a] - viewZ[b]);
+    const x = viewX[a] + (viewX[b] - viewX[a]) * t;
+    const y = viewY[a] + (viewY[b] - viewY[a]) * t;
     const length = Math.hypot(x, y);
-    return [x / length, y / length, 0];
+    rimPoint[0] = x / length;
+    rimPoint[1] = y / length;
   }
 
   // Clockwise distance (in radians, on screen) from one point of the rim to another.
@@ -263,6 +440,9 @@
     const sweep = (toAngle - fromAngle + TWO_PI) % TWO_PI; // y points down, so clockwise is increasing angle
     return sweep > TWO_PI - 1e-6 ? 0 : sweep;
   }
+
+  function chainStart(chain) { return [chain.xy[0], chain.xy[1]]; }
+  function chainEnd(chain) { return [chain.xy[chain.xy.length - 2], chain.xy[chain.xy.length - 1]]; }
 
   /*
    * Fills the visible part of a land ring that was cut by the edge of the globe.
@@ -275,14 +455,16 @@
    */
   function addFilledShape(path, chains) {
     const following = chains.map((chain) => {
-      const exit = chain[chain.length - 1];
+      const exit = chainEnd(chain);
       let best = 0;
       for (let j = 1; j < chains.length; j++) {
-        if (clockwiseSweep(exit, chains[j][0]) < clockwiseSweep(exit, chains[best][0])) best = j;
+        if (clockwiseSweep(exit, chainStart(chains[j])) < clockwiseSweep(exit, chainStart(chains[best]))) best = j;
       }
       return best;
     });
 
+    const centre = side / 2;
+    const radius = planetRadius();
     const used = new Array(chains.length).fill(false);
     for (let first = 0; first < chains.length; first++) {
       if (used[first]) continue;
@@ -290,21 +472,21 @@
       let startOfShape = true;
       while (!used[index]) {
         used[index] = true;
-        const chain = chains[index];
-        for (let k = 0; k < chain.length; k++) {
-          if (startOfShape && k === 0) path.moveTo(chain[0][0], chain[0][1]);
-          else path.lineTo(chain[k][0], chain[k][1]);
+        const xy = chains[index].xy;
+        for (let k = 0; k < xy.length; k += 2) {
+          if (startOfShape && k === 0) path.moveTo(xy[0], xy[1]);
+          else path.lineTo(xy[k], xy[k + 1]);
         }
         startOfShape = false;
 
-        const exit = chain[chain.length - 1];
+        const exit = chainEnd(chains[index]);
         const next = following[index];
-        const sweep = clockwiseSweep(exit, chains[next][0]);
-        const from = Math.atan2(exit[1] - side / 2, exit[0] - side / 2);
+        const sweep = clockwiseSweep(exit, chainStart(chains[next]));
+        const from = Math.atan2(exit[1] - centre, exit[0] - centre);
         const pieces = Math.ceil(sweep / ARC_STEP);
         for (let k = 1; k <= pieces; k++) {
           const angle = from + (sweep * k) / pieces;
-          path.lineTo(side / 2 + radius * Math.cos(angle), side / 2 + radius * Math.sin(angle));
+          path.lineTo(centre + radius * Math.cos(angle), centre + radius * Math.sin(angle));
         }
         index = next;
       }
@@ -313,9 +495,33 @@
   }
 
   function addPolyline(path, chain, close) {
-    path.moveTo(chain[0][0], chain[0][1]);
-    for (let k = 1; k < chain.length; k++) path.lineTo(chain[k][0], chain[k][1]);
+    const xy = chain.xy;
+    path.moveTo(xy[0], xy[1]);
+    for (let k = 2; k < xy.length; k += 2) path.lineTo(xy[k], xy[k + 1]);
     if (close) path.closePath();
+  }
+
+  // Adds the coast of a chain, leaving out seam edges. A whole ring without seam edges is closed up.
+  function addCoast(path, chain, closed) {
+    if (closed && chain.seam.indexOf(1) === -1) {
+      addPolyline(path, chain, true);
+      return;
+    }
+    const xy = chain.xy;
+    const points = chain.seam.length;
+    let drawing = false;
+    for (let k = 0; k < (closed ? points : points - 1); k++) {
+      if (chain.seam[k]) {
+        drawing = false;
+        continue;
+      }
+      const next = (k + 1) % points;
+      if (!drawing) {
+        path.moveTo(xy[2 * k], xy[2 * k + 1]);
+        drawing = true;
+      }
+      path.lineTo(xy[2 * next], xy[2 * next + 1]);
+    }
   }
 
   // ---------- Drawing ----------
@@ -331,93 +537,214 @@
     ctx.closePath();
   }
 
+  // The sea. It fills the lens and its shading stays put when zooming, so the view keeps the same look.
   function drawSphere(centre) {
     const body = ctx.createRadialGradient(
-      centre - radius * 0.32, centre - radius * 0.38, radius * 0.05, centre, centre, radius
+      centre - lensRadius * 0.32, centre - lensRadius * 0.38, lensRadius * 0.05, centre, centre, lensRadius
     );
     body.addColorStop(0, '#31509f');
     body.addColorStop(0.5, '#182b66');
     body.addColorStop(1, '#0a1239');
     ctx.fillStyle = body;
     ctx.beginPath();
-    ctx.arc(centre, centre, radius, 0, TWO_PI);
+    ctx.arc(centre, centre, lensRadius, 0, TWO_PI);
     ctx.fill();
   }
 
+  /*
+   * The faint grid of meridians (lines from pole to pole) and parallels (circles). Several grids are layered,
+   * each twice or so finer than the one before: a finer grid fades in once its lines are far enough apart, so
+   * a few lines always cross the lens. A line that belongs to a coarser grid is drawn only by that one.
+   */
   function drawGrid() {
-    const path = new Path2D();
-    for (const line of gridLines) {
-      turnToView(line.vectors, line.view);
-      for (const chain of visibleChains(line).chains) addPolyline(path, chain, false);
+    const lensWidth = 2 * lensRadius;
+    GRID_STEPS.forEach((step, level) => {
+      const spacing = planetRadius() * step * DEG;
+      const opacity = level === 0 ? 1 : smoothRange(spacing / lensWidth, GRID_SHOW_FROM, GRID_SHOW_TO);
+      if (opacity <= 0) return;
+      const path = new Path2D();
+      addMeridians(path, step, level);
+      addParallels(path, step, level);
+      ctx.strokeStyle = 'rgba(175, 200, 255, ' + (0.16 * opacity).toFixed(4) + ')';
+      ctx.lineWidth = 0.8;
+      ctx.stroke(path);
+    });
+  }
+
+  function belongsToCoarserGrid(degrees, level) {
+    for (let k = 0; k < level; k++) {
+      const times = degrees / GRID_STEPS[k];
+      if (Math.abs(times - Math.round(times)) < 1e-6) return true;
     }
-    ctx.strokeStyle = 'rgba(175, 200, 255, 0.16)';
-    ctx.lineWidth = 0.8;
-    ctx.stroke(path);
+    return false;
+  }
+
+  const gridPoint = [0, 0, 0];
+
+  // Puts a point of a grid line (longitude and latitude in degrees) into the scratch arrays, seen from the viewer.
+  function setGridPoint(index, lonDeg, latDeg) {
+    const lat = latDeg * DEG, lon = lonDeg * DEG;
+    turnPoint(Math.cos(lat) * Math.cos(lon), Math.cos(lat) * Math.sin(lon), Math.sin(lat), gridPoint);
+    viewX[index] = gridPoint[0];
+    viewY[index] = gridPoint[1];
+    viewZ[index] = gridPoint[2];
+    edgeSeam[index] = 0;
+  }
+
+  function addGridLine(path, count, closed) {
+    for (const chain of visibleChains(count, closed).chains) addPolyline(path, chain, false);
+  }
+
+  function addMeridians(path, step, level) {
+    const wholeGlobe = cone.angle >= Math.PI / 2;
+    const reachesPole = Math.abs(centerLat) + cone.angle >= Math.PI / 2;
+    const across = wholeGlobe || reachesPole ? Math.PI : Math.asin(Math.min(1, cone.sin / cosLat));   // how far east and west the view reaches
+    let first, last;
+    if (across >= Math.PI) {
+      first = Math.ceil(-180 / step);
+      last = Math.ceil(180 / step) - 1;
+    } else {
+      first = Math.ceil((centerLon - across) / DEG / step - 1e-9);
+      last = Math.floor((centerLon + across) / DEG / step + 1e-9);
+    }
+    for (let i = first; i <= last; i++) {
+      const lon = i * step;
+      if (level > 0 && belongsToCoarserGrid(lon, level)) continue;
+      let low = -90, high = 90;
+      if (!wholeGlobe) {
+        // The latitudes of this meridian that are in view: where it passes through the circle in view.
+        const along = cosLat * Math.cos(lon * DEG - centerLon);
+        const reach = Math.hypot(along, sinLat);
+        if (cone.cos > reach) continue;
+        const middle = Math.atan2(sinLat, along) / DEG;
+        const half = Math.acos(cone.cos / reach) / DEG;
+        low = Math.max(-90, middle - half);
+        high = Math.min(90, middle + half);
+      }
+      const pieces = Math.max(8, Math.ceil((high - low) / 3));
+      for (let k = 0; k <= pieces; k++) setGridPoint(k, lon, low + ((high - low) * k) / pieces);
+      addGridLine(path, pieces + 1, false);
+    }
+  }
+
+  function addParallels(path, step, level) {
+    const wholeGlobe = cone.angle >= Math.PI / 2;
+    const first = Math.ceil((wholeGlobe ? -90 : (centerLat - cone.angle) / DEG) / step - 1e-9);
+    const last = Math.floor((wholeGlobe ? 90 : (centerLat + cone.angle) / DEG) / step + 1e-9);
+    for (let i = first; i <= last; i++) {
+      const lat = i * step;
+      if (Math.abs(lat) >= 90 || (level > 0 && belongsToCoarserGrid(lat, level))) continue;
+      // The longitudes of this parallel that are in view.
+      let across = Math.PI;
+      if (!wholeGlobe) {
+        const ratio = (cone.cos - Math.sin(lat * DEG) * sinLat) / (Math.cos(lat * DEG) * cosLat);
+        if (ratio >= 1) continue;
+        if (ratio > -1) across = Math.acos(ratio);
+      }
+      if (across >= Math.PI) {
+        for (let k = 0; k < 120; k++) setGridPoint(k, -180 + 3 * k, lat);
+        addGridLine(path, 120, true);
+      } else {
+        const west = (centerLon - across) / DEG;
+        const pieces = Math.max(8, Math.ceil((2 * across) / DEG / 3));
+        for (let k = 0; k <= pieces; k++) setGridPoint(k, west + ((2 * across) / DEG * k) / pieces, lat);
+        addGridLine(path, pieces + 1, false);
+      }
+    }
+  }
+
+  // How much of the detailed land to show: none until it has loaded, then it takes over as the visitor zooms in.
+  function detailShare() {
+    return detail.state === 'ready' ? smoothRange(zoom, DETAIL_ZOOM_FROM, DETAIL_ZOOM_TO) * smooth(detail.fade) : 0;
   }
 
   function drawLand() {
+    const share = detailShare();
+    if (share < 1) drawLandSet(coarseRings, 1 - share);
+    if (share > 0) drawLandSet(detail.rings, share);
+  }
+
+  function drawLandSet(rings, opacity) {
     const fill = new Path2D();
     const coast = new Path2D();
-    for (const ring of landRings) {
-      turnToView(ring.outline.vectors, ring.outline.view);
-      const { chains, hidden } = visibleChains(ring.outline);
+    for (const ring of rings) {
+      if (ring.cap[3] < 85 * DEG && capOutsideView(...ring.cap)) continue;
+      const { chains, hidden } = cutRing(ring);
       if (chains.length === 0) continue;
       if (!hidden) {
         addPolyline(fill, chains[0], true);
-        if (!ring.coastLines) addPolyline(coast, chains[0], true);
+        addCoast(coast, chains[0], true);
       } else {
         // A lake cut by the edge is left unfilled: its fill would have to be "everything except the lake".
         if (!ring.isLake) addFilledShape(fill, chains);
-        if (!ring.coastLines) for (const chain of chains) addPolyline(coast, chain, false);
-      }
-      if (ring.coastLines) {
-        for (const line of ring.coastLines) {
-          turnToView(line.vectors, line.view);
-          for (const chain of visibleChains(line).chains) addPolyline(coast, chain, false);
-        }
+        for (const chain of chains) addCoast(coast, chain, false);
       }
     }
+    ctx.globalAlpha = opacity;
     ctx.fillStyle = 'rgba(244, 236, 225, 0.13)';
     ctx.fill(fill);
     ctx.strokeStyle = 'rgba(244, 236, 225, 0.88)';
     ctx.lineWidth = 1;
     ctx.lineJoin = 'round';
     ctx.stroke(coast);
+    ctx.globalAlpha = 1;
   }
 
+  // Turns a ring and cuts it at the edge of the globe. A run of points far outside the view is replaced by one straight step.
+  function cutRing(ring) {
+    const { vec, seam, chunkStart, caps } = ring;
+    const chunks = chunkStart.length - 1;
+    let count = 0;
+    for (let c = 0; c < chunks; c++) {
+      const start = chunkStart[c];
+      const o = 6 * c;
+      const near = !capOutsideView(caps[o], caps[o + 1], caps[o + 2], caps[o + 3], caps[o + 4], caps[o + 5]);
+      const stop = near ? chunkStart[c + 1] : start + 1;
+      for (let i = start; i < stop; i++) {
+        const x = vec[3 * i], y = vec[3 * i + 1], z = vec[3 * i + 2];
+        const towardsCenterMeridian = x * cosLon + y * sinLon;
+        viewX[count] = -x * sinLon + y * cosLon;
+        viewY[count] = z * cosLat - towardsCenterMeridian * sinLat;
+        viewZ[count] = z * sinLat + towardsCenterMeridian * cosLat;
+        edgeSeam[count] = near ? seam[i] : 0;
+        count++;
+      }
+    }
+    return visibleChains(count, true);
+  }
+
+  // The globe's crisp rim and the glow just inside it. They melt away as the soft edge grows.
   function drawRim(centre) {
-    const glow = ctx.createRadialGradient(centre, centre, radius * 0.8, centre, centre, radius);
+    ctx.globalAlpha = 1 - featherAmount();
+    const glow = ctx.createRadialGradient(centre, centre, lensRadius * 0.8, centre, centre, lensRadius);
     glow.addColorStop(0, 'rgba(140, 170, 255, 0)');
     glow.addColorStop(1, 'rgba(140, 170, 255, 0.26)');
     ctx.fillStyle = glow;
     ctx.beginPath();
-    ctx.arc(centre, centre, radius, 0, TWO_PI);
+    ctx.arc(centre, centre, lensRadius, 0, TWO_PI);
     ctx.fill();
     ctx.strokeStyle = 'rgba(190, 210, 255, 0.5)';
     ctx.lineWidth = 1;
     ctx.stroke();
+    ctx.globalAlpha = 1;
   }
 
-  function pinSize() { return Math.max(6, radius * 0.055); }
-  function activePinSize() { return Math.max(10, radius * 0.095); }
-  function activeRingRadius() { return Math.max(15, radius * 0.125); }
+  // Pins keep their size when zooming: they are sized by the lens, not by the planet.
+  function pinSize() { return Math.max(6, lensRadius * 0.055); }
+  function activePinSize() { return Math.max(10, lensRadius * 0.095); }
+  function activeRingRadius() { return Math.max(15, lensRadius * 0.125); }
 
   function projectPins() {
     for (const pin of places) {
-      turnToView([pin.vector], [pin.view]);
-      const [x, y] = toCanvas(pin.view);
-      pin.x = x;
-      pin.y = y;
+      turnPoint(pin.vector[0], pin.vector[1], pin.vector[2], pin.view);
+      pin.x = side / 2 + planetRadius() * pin.view[0];
+      pin.y = side / 2 - planetRadius() * pin.view[1];
       pin.z = pin.view[2];
     }
   }
 
-  function smooth(t) { return t * t * (3 - 2 * t); }
-
   // Moves every pin's level towards 1 (the active pin) or 0 (the others). Returns true while anything is still moving.
-  function stepLevels(now) {
-    const step = animating ? Math.min(now - lastFrameTime, 50) / EASE_MS : 0;   // the first frame of a change only starts it
-    lastFrameTime = now;
+  function stepLevels(step) {
     let moving = false;
     places.forEach((pin, index) => {
       const target = index === activeIndex ? 1 : 0;
@@ -460,15 +787,33 @@
     drawQueued = false;
     if (side === 0) return;
     const centre = side / 2;
-    animating = stepLevels(performance.now());
+    const now = performance.now();
+    const elapsed = animating ? Math.min(now - lastFrameTime, 50) : 0;   // the first frame of a change only starts it
+    lastFrameTime = now;
+
+    let moving = stepCamera(animating ? elapsed : 16);
+    updateCone();
+    projectPins();
+    if (viewChanged) {
+      viewChanged = false;
+      pickActiveFromView();
+    }
+    moving = stepLevels(elapsed / EASE_MS) || moving;
+    if (detail.state === 'ready' && detail.fade < 1) {
+      detail.fade = reducedMotion.matches ? 1 : Math.min(1, detail.fade + elapsed / DETAIL_FADE_MS);
+      moving = true;
+    }
+    animating = moving;
+
+    updateRings();
     ctx.setTransform(pixelRatio, 0, 0, pixelRatio, 0, 0);
     ctx.clearRect(0, 0, side, side);
     drawSphere(centre);
     drawGrid();
     drawLand();
     drawRim(centre);
-    projectPins();
     drawPins();
+    applyLens(centre);
     updateLeader();
     if (animating) requestDraw();   // frames are drawn only while something is changing
   }
@@ -477,6 +822,73 @@
     if (drawQueued) return;
     drawQueued = true;
     requestAnimationFrame(draw);
+  }
+
+  // ---------- Fine land, loaded when the visitor first zooms ----------
+
+  // The detailed outlines are a separate file, added to the page as a script (a plain request would not work from disk).
+  // Until it has arrived, or if it never does, the coarse outlines are used.
+  function requestDetail() {
+    if (detail.state !== 'idle') return;
+    detail.state = 'loading';
+    const script = document.createElement('script');
+    script.src = 'land-detail.js';
+    script.onload = () => {
+      if (typeof LAND_DETAIL === 'undefined') {
+        detail.state = 'failed';
+        return;
+      }
+      detail.rings = LAND_DETAIL.map((ring) => buildRing(decodeDetailRing(ring)));
+      growScratch(detail.rings);
+      detail.state = 'ready';
+      requestDraw();
+    };
+    script.onerror = () => { detail.state = 'failed'; };
+    document.head.appendChild(script);
+  }
+
+  // Detail rings are stored as whole thousandths of a degree: the first point, then the step to each next point.
+  function decodeDetailRing(ring) {
+    const flat = new Array(ring.length);
+    let lon = ring[0], lat = ring[1];
+    flat[0] = lon / 1000;
+    flat[1] = lat / 1000;
+    for (let i = 2; i < ring.length; i += 2) {
+      lon += ring[i];
+      lat += ring[i + 1];
+      flat[i] = lon / 1000;
+      flat[i + 1] = lat / 1000;
+    }
+    return flat;
+  }
+
+  // ---------- Camera ----------
+
+  // The deepest zoom: deep enough to pull the two closest places apart, but never beyond a sensible limit.
+  function zoomLimit() {
+    let closest = Infinity;
+    for (let i = 0; i < places.length; i++) {
+      for (let j = i + 1; j < places.length; j++) {
+        const a = places[i].vector, b = places[j].vector;
+        const apart = Math.acos(clamp(a[0] * b[0] + a[1] * b[1] + a[2] * b[2], -1, 1));
+        if (apart > 1e-6) closest = Math.min(closest, apart);   // places on the very same spot cannot be pulled apart
+      }
+    }
+    return clamp(SEPARATE_AT_MAX_PX / (closest * lensRadius), ZOOM_FLOOR, ZOOM_CAP);
+  }
+
+  // Moves the camera for one frame (a wheel zoom gliding to its goal). Returns true while it is still moving.
+  function stepCamera(elapsed) {
+    if (zoom === zoomGoal) return false;
+    const gap = Math.log(zoomGoal / zoom);
+    if (reducedMotion.matches || Math.abs(gap) < 0.002) {
+      setZoom(zoomGoal);
+    } else {
+      setZoom(zoom * Math.exp(gap * (1 - Math.exp(-elapsed / ZOOM_EASE_MS))));
+    }
+    if (anchor) turnPointTo(anchor.point, anchor.right, anchor.up, planetRadius());
+    if (zoom === zoomGoal) anchor = null;
+    return zoom !== zoomGoal;
   }
 
   // ---------- Caption and leader line ----------
@@ -545,18 +957,23 @@
     requestDraw();
   }
 
-  // The visible pin nearest the middle of the globe's face (the one facing us most). The current place only
-  // gives way to another pin that is clearly nearer, so it does not flicker while two are about equally near.
+  // A pin counts as visible when it faces us and is not hidden by the soft edge of the lens.
+  function pinShown(pin, minimum) {
+    return pin.z > PIN_MIN_Z && lensVisibility(pin.x, pin.y) >= minimum;
+  }
+
+  // The visible pin nearest the middle of the lens. The current place only gives way to another pin that is
+  // clearly nearer, so it does not flicker while two are about equally near.
   function pickActiveFromView() {
-    projectPins();
+    const centre = side / 2;
+    const away = (pin) => Math.hypot(pin.x - centre, pin.y - centre);
     let best = -1;
     places.forEach((pin, index) => {
-      if (pin.z > PIN_MIN_Z && (best === -1 || pin.z > places[best].z)) best = index;
+      if (pinShown(pin, 0.35) && (best === -1 || away(pin) < away(places[best]))) best = index;
     });
     const current = places[activeIndex];
-    if (best !== -1 && current && current.z > PIN_MIN_Z) {
-      const away = (pin) => Math.acos(Math.min(1, pin.z));
-      if (away(places[best]) > away(current) - SWITCH_MARGIN) best = activeIndex;
+    if (best !== -1 && current && pinShown(current, 0.1)) {
+      if (away(places[best]) > away(current) - SWITCH_MARGIN * lensRadius) best = activeIndex;
     }
     setActive(best);
   }
@@ -581,33 +998,35 @@
     leaderLine.setAttribute('y2', endY);
   }
 
-  // ---------- Turning the globe ----------
+  // ---------- Turning and zooming by hand ----------
 
   function rotateBy(deltaLon, deltaLat) {
-    centerLon = ((centerLon + deltaLon + Math.PI * 3) % TWO_PI) - Math.PI;
-    centerLat = Math.max(-MAX_TILT, Math.min(MAX_TILT, centerLat + deltaLat));
-    pickActiveFromView();
+    setCenter(centerLon + deltaLon, centerLat + deltaLat);
     requestDraw();
   }
 
-  let pointerId = null;
+  const touches = new Map();     // the fingers (or the mouse button) now down: pointer id -> { x, y } in client pixels
+  let dragId = null;             // the pointer that is turning the globe
+  let pinch = null;              // while two fingers are down: the zoom and the spot of the Earth they started on
   let lastX = 0, lastY = 0, lastTime = 0;
   let travelled = 0;
+  let wasPinched = false;        // two fingers were down during this touch, so it is not a tap
   let speedLon = 0, speedLat = 0;   // radians per millisecond
   let inertiaFrame = 0;
 
-  // One pixel of dragging turns the globe by 1/radius radians, so the point under the finger follows it.
+  // One pixel of dragging turns the globe by 1/radius radians, so the point under the finger follows it
+  // (and the turning slows down as the visitor zooms in).
   // Near the poles, east-west distances shrink, so sideways turns get larger there (up to a limit).
   function dragToTurn(dx, dy) {
     const eastWestScale = 1 / Math.max(Math.cos(centerLat), 0.5);
-    return [(-dx / radius) * eastWestScale, dy / radius];
+    return [(-dx / planetRadius()) * eastWestScale, dy / planetRadius()];
   }
 
   function pinNear(x, y, reach) {
     let best = -1;
     let bestDistance = reach;
     places.forEach((pin, index) => {
-      if (pin.z <= PIN_MIN_Z) return;
+      if (!pinShown(pin, 0.35)) return;
       const distance = Math.hypot(pin.x - x, pin.y - y);
       if (distance <= bestDistance) {
         best = index;
@@ -620,6 +1039,12 @@
   function localPoint(event) {
     const box = canvas.getBoundingClientRect();
     return [event.clientX - box.left, event.clientY - box.top];
+  }
+
+  // Remembers the spot of the Earth under a canvas position, so that zooming can keep it there.
+  function grab(x, y) {
+    const right = x - side / 2, up = side / 2 - y;
+    return { point: earthAt(right, up, planetRadius()), right, up };
   }
 
   function stopInertia() {
@@ -645,27 +1070,66 @@
     inertiaFrame = requestAnimationFrame(step);
   }
 
-  canvas.addEventListener('pointerdown', (event) => {
-    if (pointerId !== null || (event.pointerType === 'mouse' && event.button !== 0)) return;
-    pointerId = event.pointerId;
-    canvas.setPointerCapture(pointerId);
-    stopInertia();
-    lastX = event.clientX;
-    lastY = event.clientY;
-    lastTime = event.timeStamp;
+  function startDrag(id, x, y, time) {
+    dragId = id;
+    lastX = x;
+    lastY = y;
+    lastTime = time;
     travelled = 0;
     speedLon = speedLat = 0;
     canvas.classList.add('dragging');
+  }
+
+  // The distance between the two fingers and the point halfway between them.
+  function fingerGap() {
+    const [a, b] = [...touches.values()];
+    return { distance: Math.hypot(a.x - b.x, a.y - b.y), x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+  }
+
+  canvas.addEventListener('pointerdown', (event) => {
+    if (touches.size >= 2 || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    canvas.setPointerCapture(event.pointerId);
+    touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    stopInertia();
+    zoomGoal = zoom;   // a gesture takes over from a wheel zoom still gliding
+    anchor = null;
+    if (touches.size === 1) {
+      wasPinched = false;
+      startDrag(event.pointerId, event.clientX, event.clientY, event.timeStamp);
+      return;
+    }
+    // A second finger: turning gives way to pinching, which zooms and moves about the midpoint of the fingers.
+    wasPinched = true;
+    dragId = null;
+    requestDetail();
+    const gap = fingerGap();
+    const box = canvas.getBoundingClientRect();
+    pinch = { zoom, distance: Math.max(gap.distance, 1), spot: grab(gap.x - box.left, gap.y - box.top) };
   });
 
   canvas.addEventListener('pointermove', (event) => {
-    if (event.pointerId !== pointerId) {
-      if (pointerId === null && event.pointerType === 'mouse') {
+    const touch = touches.get(event.pointerId);
+    if (!touch) {
+      if (touches.size === 0 && event.pointerType === 'mouse') {
         const [x, y] = localPoint(event);
         canvas.classList.toggle('on-pin', pinNear(x, y, 16) !== -1);
       }
       return;
     }
+    touch.x = event.clientX;
+    touch.y = event.clientY;
+
+    if (pinch) {
+      const gap = fingerGap();
+      const box = canvas.getBoundingClientRect();
+      setZoom(pinch.zoom * (gap.distance / pinch.distance));
+      zoomGoal = zoom;
+      turnPointTo(pinch.spot.point, gap.x - box.left - side / 2, side / 2 - (gap.y - box.top), planetRadius());
+      requestDraw();
+      return;
+    }
+
+    if (event.pointerId !== dragId) return;
     const dx = event.clientX - lastX;
     const dy = event.clientY - lastY;
     const elapsed = Math.max(1, event.timeStamp - lastTime);
@@ -681,12 +1145,23 @@
   });
 
   function endPointer(event) {
-    if (event.pointerId !== pointerId) return;
-    pointerId = null;
+    if (!touches.delete(event.pointerId)) return;
+    if (pinch) {
+      // One finger is left: it carries on turning the globe, without a tap or a spin at the end.
+      pinch = null;
+      const rest = [...touches.entries()][0];
+      if (rest) {
+        startDrag(rest[0], rest[1].x, rest[1].y, event.timeStamp);
+        travelled = TAP_MOVE_LIMIT;
+      }
+      return;
+    }
+    if (event.pointerId !== dragId) return;
+    dragId = null;
     canvas.classList.remove('dragging');
     if (event.type === 'pointercancel') return;
 
-    if (travelled < TAP_MOVE_LIMIT) {
+    if (travelled < TAP_MOVE_LIMIT && !wasPinched) {
       const [x, y] = localPoint(event);
       const tapped = pinNear(x, y, event.pointerType === 'touch' ? 28 : 18);
       if (tapped !== -1) {
@@ -696,20 +1171,39 @@
       return;
     }
     const heldStill = event.timeStamp - lastTime > 80;
-    if (!heldStill && !reducedMotion.matches) startInertia();
+    if (!heldStill && !reducedMotion.matches && !wasPinched) startInertia();
   }
   canvas.addEventListener('pointerup', endPointer);
   canvas.addEventListener('pointercancel', endPointer);
+
+  // The wheel zooms towards the pointer; so does a trackpad pinch (a wheel with the control key held).
+  // Over the globe these never scroll or zoom the page.
+  canvas.addEventListener('wheel', (event) => {
+    event.preventDefault();
+    const pixels = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? 300 : 1);
+    const change = clamp(-pixels * (event.ctrlKey ? PINCH_WHEEL_SPEED : WHEEL_SPEED), -1, 1);
+    const goal = clamp(zoomGoal * Math.exp(change), 1, zoomMax);
+    if (goal === zoomGoal) return;
+    if (goal > 1) requestDetail();
+    stopInertia();
+    zoomGoal = goal;
+    const [x, y] = localPoint(event);
+    anchor = grab(x, y);
+    requestDraw();
+  }, { passive: false });
 
   // ---------- Size ----------
 
   function resize() {
     const box = canvas.getBoundingClientRect();
     side = box.width;
-    radius = side * DISC_SHARE / 2;
+    lensRadius = side * DISC_SHARE / 2;
     pixelRatio = window.devicePixelRatio || 1;
     canvas.width = Math.round(side * pixelRatio);
     canvas.height = Math.round(side * pixelRatio);
+    zoomMax = zoomLimit();
+    zoomGoal = Math.min(zoomGoal, zoomMax);
+    setZoom(zoom);
     // Drawn straight away: changing the canvas size clears it, and waiting for the next frame would show a blank globe.
     draw();
   }
@@ -734,5 +1228,4 @@
     document.fonts.ready.then(relayout);
   }
   resize();
-  pickActiveFromView();
 })();

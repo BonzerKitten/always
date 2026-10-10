@@ -236,7 +236,8 @@ main {
 .globe-canvas.dragging { cursor: grabbing; }
 .globe-canvas.on-pin { cursor: pointer; }
 
-.ring { fill: none; stroke: rgba(244, 236, 225, 0.55); stroke-width: 0.5; filter: drop-shadow(0 0 1.5px rgba(190, 205, 255, 0.6)); }
+/* The rings fade out while the visitor zooms in (globe.js sets --ring-opacity). */
+.ring { fill: none; stroke: rgba(244, 236, 225, 0.55); stroke-width: 0.5; filter: drop-shadow(0 0 1.5px rgba(190, 205, 255, 0.6)); opacity: var(--ring-opacity, 1); }
 .ring .ring-2 { stroke: rgba(244, 236, 225, 0.4); }
 /* The four-pointed sparkles around the globe: each is a small layer that pulses in size and brightness. */
 .spark {
