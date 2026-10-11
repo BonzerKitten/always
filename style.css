@@ -158,9 +158,11 @@ h1 {
 }
 
 /* ---------- Counters ---------- */
+/* The two side columns are always the same width, whatever is in them, so the globe stays under the title. */
 main {
+  --side-min: clamp(200px, 20vw, 320px);   /* the width of the counters list */
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: minmax(var(--side-min), 1fr) auto minmax(var(--side-min), 1fr);
   align-items: center;
   min-height: 0;
 }
@@ -170,7 +172,8 @@ main {
   line-height: 1;
   letter-spacing: 0.02em;
 }
-.hero { justify-self: start; align-self: end; padding-bottom: calc(var(--vh) * 4); }
+/* The hero fills its column, so counters.js can tell when the big number is too wide for it and shrink it to fit. */
+.hero { justify-self: stretch; min-width: 0; align-self: end; padding-bottom: calc(var(--vh) * 4); }
 .hero .num {
   font-size: clamp(64px, min(8.6vw, calc(var(--vh) * 12)), 150px);
   color: var(--star);
@@ -185,7 +188,7 @@ main {
 .hero .rule { width: 44px; height: 1px; background: var(--line); margin: 1.6em 0 1.1em; }
 .hero .sub { font-size: clamp(12px, 1vw, 15px); color: var(--text-soft); letter-spacing: 0.06em; }
 
-.counters { justify-self: end; list-style: none; width: clamp(200px, 20vw, 320px); }
+.counters { justify-self: end; list-style: none; width: var(--side-min); }
 .counters li { border-top: 1px solid var(--line); padding: clamp(10px, calc(var(--vh) * 2.2), 22px) 0 clamp(12px, calc(var(--vh) * 2.6), 26px); }
 .counters li:last-child { border-bottom: 1px solid var(--line); }
 .counters .num { font-size: clamp(30px, min(3.4vw, calc(var(--vh) * 6)), 58px); }
