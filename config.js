@@ -75,6 +75,7 @@ const SITE = {
    * Nothing else needs to change when you add or remove a place.
    */
   places: [
+    { name: 'Curitiba', lat: -25.43, lon: -49.27, year: 2020, month: 2 },
     { name: 'Campos do Jordão', lat: -22.74, lon: -45.59, year: 2021, month: 10 },
     { name: 'Gramado', lat: -29.38, lon: -50.87, year: 2022, month: 1 },
     { name: 'Ubatuba', lat: -23.43, lon: -45.08, year: 2022, month: 12 },
