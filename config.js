@@ -17,9 +17,9 @@ const SITE = {
     // and for the countdown to the next anniversary (same day and month every year).
     together: { year: 2014, month: 2, day: 5 },
 
-    // PLACEHOLDER: the exact day you met is not known yet, so this is a guess.
-    // Replace it with the real day.
-    met: { year: 2012, month: 9, day: 1 },
+    // ESTIMATE: you met some time in April 2011 and the exact day is not known, so the middle of the month is used.
+    // If you ever find the real day, put it here.
+    met: { year: 2011, month: 4, day: 15 },
 
     // Your birthday (the day you were born).
     birth: { year: 1996, month: 2, day: 3 },
