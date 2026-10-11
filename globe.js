@@ -52,8 +52,8 @@
   // The window onto the planet when zoomed in.
   const FEATHER_SHARE = 0.22;       // width of the soft edge, as a share of the lens radius
   const FEATHER_ZOOM_SPAN = 0.6;    // the soft edge grows from nothing over this much zoom after the minimum
-  const GRIP_ZOOM_SPAN = 0.5;       // dragging holds the grabbed spot under the pointer fully from this much zoom after the minimum
-  const PIN_WINDOW_ZOOM_SPAN = 0.25; // pins are fully held inside the lens from this much zoom after the minimum
+  const POLE_LIMIT_ZOOM_SPAN = 0.5; // the limit on sideways turning near the poles is lifted over this much zoom after the minimum
+  const PIN_EDGE_BAND = 0.08;       // fully zoomed out, a pin fades out over this share of the lens radius beyond the globe's edge
   const RING_FADE_ZOOM_SPAN = 0.4;  // the orbit rings fade out over this much zoom after the minimum
   const HALO_FADE = 0.6;            // the halo around the globe loses this share of its strength
 
@@ -364,15 +364,25 @@
   }
 
   // Turns the globe so that the point of the Earth (a unit vector) is seen "right" and "up" pixels from the middle of the canvas.
+  // The point can be seen there in two ways: on our side of the pole, or beyond it (looking over the pole).
+  // The turn that moves the view least is taken, so the globe never flips to the far side of the Earth.
   function turnPointTo(point, right, up, radius) {
     const [east, north, toward] = spotInView(right, up, radius);
-    const pointLat = Math.asin(clamp(point[2], -1, 1));
-    const acrossLon = Math.asin(clamp(east / Math.max(Math.cos(pointLat), 1e-9), -1, 1));   // how far east of the middle the point lies
-    const towardsCenterMeridian = Math.cos(pointLat) * Math.cos(acrossLon);
-    setCenter(
-      Math.atan2(point[1], point[0]) - acrossLon,
-      Math.atan2(point[2], towardsCenterMeridian) - Math.atan2(north, toward)
-    );
+    const pointLon = Math.atan2(point[1], point[0]);
+    const cosPointLat = Math.max(Math.sqrt(1 - Math.min(1, point[2] * point[2])), 1e-9);
+    const acrossLon = Math.asin(clamp(east / cosPointLat, -1, 1));   // how far east of the middle the point lies, on our side of the pole
+    let bestLon = centerLon, bestLat = centerLat, bestMove = Infinity;
+    for (const across of [acrossLon, Math.PI - acrossLon]) {
+      const lon = pointLon - across;
+      const lat = clamp(wrapAngle(Math.atan2(point[2], cosPointLat * Math.cos(across)) - Math.atan2(north, toward)), -MAX_TILT, MAX_TILT);
+      const move = Math.abs(wrapAngle(lon - centerLon)) * cosLat + Math.abs(lat - centerLat);
+      if (move < bestMove) {
+        bestLon = lon;
+        bestLat = lat;
+        bestMove = move;
+      }
+    }
+    setCenter(bestLon, bestLat);
   }
 
   // ---------- The lens ----------
@@ -381,22 +391,23 @@
   function featherAmount() { return smoothRange(zoom, 1, 1 + FEATHER_ZOOM_SPAN); }
   function featherWidth() { return 0.5 + FEATHER_SHARE * lensRadius * featherAmount(); }
 
-  /*
-   * Nothing changes in one step when the visitor starts to zoom: the lens edge for the planet starts one pixel
-   * outside the globe's rim (room for the rim line, which is the globe's edge at minimum zoom) and closes in on the
-   * lens, while the rim fades; the window for the pins starts beyond the whole canvas (pins sit on the rim, half
-   * outside the globe, at minimum zoom) and closes in on the lens over PIN_WINDOW_ZOOM_SPAN of zoom.
-   */
+  // The lens edge for the planet starts one pixel outside the globe's rim (room for the rim line, which is the
+  // globe's edge at minimum zoom) and closes in on the lens as the soft edge grows, while the rim fades.
   function planetEdge() { return lensRadius + 1 - featherAmount(); }
-  function pinEdge() {
-    return lensRadius + (side * 0.75 - lensRadius) * (1 - smoothRange(zoom, 1, 1 + PIN_WINDOW_ZOOM_SPAN));
-  }
 
-  // How much of a pin at this spot of the canvas is still visible (the soft edge of the lens fades it out).
+  /*
+   * How much of a pin whose middle is at this spot of the canvas is visible. A pin fades by how far its middle is
+   * from the lens. Fully zoomed out every pin is on the globe, so all of them show; as the planet grows, a pin
+   * carried past the globe's edge fades out over a narrow band beyond it. Once the soft edge has grown, the band
+   * is the soft edge itself, so pins fade together with the land under them.
+   */
   function lensVisibility(x, y) {
     if (zoom <= 1) return 1;
+    const soft = featherAmount();
     const distance = Math.hypot(x - side / 2, y - side / 2);
-    return 1 - smoothRange(distance, pinEdge() - featherWidth(), pinEdge());
+    const from = lensRadius * (1 - FEATHER_SHARE * soft);
+    const to = lensRadius * (1 + PIN_EDGE_BAND * (1 - soft)) + 0.5;
+    return 1 - smoothRange(distance, from, to);
   }
 
   // Hides the planet outside the lens, with a soft edge, by keeping only what lies under a fading circle.
@@ -879,13 +890,8 @@
     return moving;
   }
 
-  function drawPins(centre) {
+  function drawPins() {
     ctx.save();
-    if (zoom > 1) {
-      ctx.beginPath();
-      ctx.arc(centre, centre, pinEdge(), 0, TWO_PI);
-      ctx.clip();
-    }
     ctx.shadowColor = PIN_GLOW;
     ctx.shadowBlur = 9 * pixelRatio;
     nodes.forEach((node) => {
@@ -959,7 +965,7 @@
     drawLand();
     drawRim(centre);
     applyLens(centre);
-    drawPins(centre);
+    drawPins();
     updateLeader();
     if (animating) requestDraw();   // frames are drawn only while something is changing
   }
@@ -980,13 +986,14 @@
     const script = document.createElement('script');
     script.src = 'land-detail.js';
     script.onload = () => {
-      if (typeof LAND_DETAIL === 'undefined') {
-        detail.state = 'failed';
-        return;
-      }
+      // A damaged file (missing, not a list of rings, or a ring that is not a run of numbers starting on the map):
+      // carry on with the coarse land.
+      const isRing = (ring) => Array.isArray(ring) && ring.length >= 6 && ring.length % 2 === 0 &&
+        ring.every(Number.isFinite) && Math.abs(ring[0]) <= 180000 && Math.abs(ring[1]) <= 90000;
       try {
+        if (!Array.isArray(LAND_DETAIL) || LAND_DETAIL.length === 0 || !LAND_DETAIL.every(isRing)) throw new Error('damaged');
         detail.rings = LAND_DETAIL.map((ring) => buildRing(decodeDetailRing(ring)));
-      } catch (error) {   // a damaged file: carry on with the coarse land
+      } catch (error) {
         detail.state = 'failed';
         return;
       }
@@ -1232,7 +1239,6 @@
 
   const touches = new Map();     // the fingers (or the mouse button) now down: pointer id -> { x, y } in client pixels
   let dragId = null;             // the pointer that is turning the globe
-  let dragSpot = null;           // the spot of the Earth it grabbed
   let pinch = null;              // while two fingers are down: the zoom and the spot of the Earth they started on
   let lastX = 0, lastY = 0, lastTime = 0;
   let travelled = 0;
@@ -1242,29 +1248,16 @@
 
   // One pixel of dragging turns the globe by 1/radius radians, so the point under the finger follows it
   // (and the turning slows down as the visitor zooms in).
-  // Near the poles, east-west distances shrink, so sideways turns get larger there (up to a limit).
+  // Near the poles, east-west distances shrink, so sideways turns get larger there. Fully zoomed out that is
+  // limited, so the whole globe does not spin too fast; zoomed in, the limit is lifted, so the land in the middle
+  // of the lens keeps following the finger at any latitude.
   function dragToTurn(dx, dy) {
-    const eastWestScale = 1 / Math.max(Math.cos(centerLat), 0.5);
+    const limit = 0.5 * (1 - smoothRange(zoom, 1, 1 + POLE_LIMIT_ZOOM_SPAN));
+    const eastWestScale = 1 / Math.max(Math.cos(centerLat), limit);
     return [(-dx / planetRadius()) * eastWestScale, dy / planetRadius()];
   }
 
   function wrapAngle(angle) { return ((angle + Math.PI * 3) % TWO_PI) - Math.PI; }
-
-  /*
-   * Turns the globe for a drag. Zoomed out, the globe turns by the amount above (today's feel). Zoomed in, the
-   * spot that was grabbed is kept under the pointer exactly, at any latitude; in between the two are blended.
-   */
-  function turnByDrag(deltaLon, deltaLat, clientX, clientY) {
-    let lon = centerLon + deltaLon, lat = centerLat + deltaLat;
-    const grip = smoothRange(zoom, 1, 1 + GRIP_ZOOM_SPAN);
-    if (grip > 0) {
-      const box = canvas.getBoundingClientRect();
-      turnPointTo(dragSpot.point, clientX - box.left - side / 2, side / 2 - (clientY - box.top), planetRadius());
-      lon += grip * wrapAngle(centerLon - lon);
-      lat += grip * (centerLat - lat);
-    }
-    setCenter(lon, lat);
-  }
 
   function pinNear(x, y, reach) {
     let best = -1;
@@ -1314,9 +1307,15 @@
     inertiaFrame = requestAnimationFrame(step);
   }
 
+  // A drag or a pinch takes over from a wheel zoom or a flight that is still going. A press alone does not: a
+  // second click or tap during a flight (a double click on a group) must not strand the view half way there.
+  function takeOverCamera() {
+    zoomGoal = zoom;
+    anchor = null;
+    flight = null;
+  }
+
   function startDrag(id, x, y, time) {
-    const box = canvas.getBoundingClientRect();
-    dragSpot = grab(x - box.left, y - box.top);
     dragId = id;
     lastX = x;
     lastY = y;
@@ -1337,15 +1336,14 @@
     canvas.setPointerCapture(event.pointerId);
     touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
     stopInertia();
-    zoomGoal = zoom;   // a gesture takes over from a wheel zoom or a flight still going
-    anchor = null;
-    flight = null;
+    if (!flight) takeOverCamera();
     if (touches.size === 1) {
       wasPinched = false;
       startDrag(event.pointerId, event.clientX, event.clientY, event.timeStamp);
       return;
     }
     // A second finger: turning gives way to pinching, which zooms and moves about the midpoint of the fingers.
+    takeOverCamera();
     wasPinched = true;
     dragId = null;
     requestDetail();
@@ -1380,18 +1378,17 @@
     const dx = event.clientX - lastX;
     const dy = event.clientY - lastY;
     const elapsed = Math.max(1, event.timeStamp - lastTime);
+    const wasStill = travelled < TAP_MOVE_LIMIT;
     travelled += Math.abs(dx) + Math.abs(dy);
     lastX = event.clientX;
     lastY = event.clientY;
     lastTime = event.timeStamp;
     if (travelled < TAP_MOVE_LIMIT) return;
-    const [wantedLon, wantedLat] = dragToTurn(dx, dy);
-    const fromLon = centerLon, fromLat = centerLat;
-    turnByDrag(wantedLon, wantedLat, event.clientX, event.clientY);
-    const deltaLon = wrapAngle(centerLon - fromLon), deltaLat = centerLat - fromLat;
+    if (wasStill) takeOverCamera();   // the press has become a drag
+    const [deltaLon, deltaLat] = dragToTurn(dx, dy);
     speedLon = 0.6 * (deltaLon / elapsed) + 0.4 * speedLon;
     speedLat = 0.6 * (deltaLat / elapsed) + 0.4 * speedLat;
-    requestDraw();
+    rotateBy(deltaLon, deltaLat);
   });
 
   function endPointer(event) {
@@ -1431,7 +1428,7 @@
   // The wheel zooms towards the pointer; so does a trackpad pinch (a wheel with the control key held).
   // Over the globe these never scroll or zoom the page. While the view is flying to a tapped group the wheel is
   // ignored: a trackpad often keeps sending wheel steps for a moment after a tap, and they must not pull the
-  // flight off course. A drag, a pinch or another tap still takes over at once.
+  // flight off course. A drag, a pinch or a tap on another group still takes over at once.
   canvas.addEventListener('wheel', (event) => {
     event.preventDefault();
     if (flight) return;
@@ -1441,7 +1438,6 @@
     if (goal === zoomGoal) return;
     if (goal > 1) requestDetail();
     stopInertia();
-    flight = null;
     zoomGoal = goal;
     const [x, y] = localPoint(event);
     anchor = grab(x, y);
@@ -1459,6 +1455,11 @@
     canvas.height = Math.round(side * pixelRatio);
     zoomMax = zoomLimit();
     markGroupsThatCannotSplit();
+    // On another screen size a group may have become one that can (or cannot) be pulled apart: its caption says which.
+    if (shownIndex >= 0 && shownIndex === activeIndex && nodes[shownIndex].children) {
+      if (!nodes[shownIndex].stuck) activeMember = -1;
+      showCaption(activeIndex, activeMember);
+    }
     zoomGoal = Math.min(zoomGoal, zoomMax);
     if (flight) flight.goal = Math.min(flight.goal, zoomMax);
     setZoom(zoom);
