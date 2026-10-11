@@ -1,0 +1,8 @@
+{
+  "name": "always-tests",
+  "private": true,
+  "description": "Checks for the site. Not part of the page: nothing here is loaded by index.html.",
+  "dependencies": {
+    "puppeteer-core": "^25.13.0"
+  }
+}

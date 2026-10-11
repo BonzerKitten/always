@@ -1,0 +1,17 @@
+
+  resize();
+  window.__g = {
+    view(lon, lat, z) { flight = null; zoomGoal = clamp(z, 1, zoomMax); setZoom(z); setCenter(lon * DEG, lat * DEG); anchor = null; requestDraw(); },
+    get zoom() { return zoom; }, get zoomGoal() { return zoomGoal; }, get zoomMax() { return zoomMax; }, get lens() { return lensRadius; }, get side() { return side; },
+    get center() { return [centerLon / DEG, centerLat / DEG]; }, get detail() { return detail.state + ':' + detail.fade; },
+    get active() { return activeIndex; }, get shown() { return shownIndex; }, get flying() { return !!flight; }, get animating() { return animating; }, get queued() { return drawQueued; },
+    get feather() { return featherWidth(); },
+    get member() { return typeof activeMember === 'undefined' ? -1 : activeMember; },
+    get inertia() { return inertiaFrame !== 0; },
+    get speed() { return [speedLon, speedLat]; },
+    drawNow() { draw(); draw(); draw(); },
+    snap() { return { zoom, goal: zoomGoal, max: zoomMax, lon: centerLon / DEG, lat: centerLat / DEG, active: activeIndex, shown: shownIndex, flying: !!flight, lens: lensRadius, side,
+      member: typeof activeMember === 'undefined' ? -1 : activeMember, shownMember: typeof shownMember === 'undefined' ? -1 : shownMember, anim: animating, queued: drawQueued, anchor: !!anchor, inertia: inertiaFrame !== 0,
+      nodes: nodes.map((n, i) => ({ i, m: n.members, x: n.x, y: n.y, ox: n.ownX, oy: n.ownY, z: n.z, w: n.weight, f: n.form, mg: n.merged, lv: n.level, vis: lensVisibility(n.x, n.y), h: n.height, p: n.parent, st: !!n.stuck })) }; },
+  };
+})();
