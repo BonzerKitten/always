@@ -4,7 +4,8 @@ exports.L = L; exports.A = A;
 const lead = (page) => page.evaluate(() => { const l = document.getElementById('leader-line'), c = document.getElementById('globe-canvas').getBoundingClientRect(), sl = document.getElementById('globe-slot').getBoundingClientRect(); return { x1: +l.getAttribute('x1') + sl.left - c.left, y1: +l.getAttribute('y1') + sl.top - c.top, op: getComputedStyle(document.getElementById('leader')).opacity, capOp: getComputedStyle(document.getElementById('caption')).opacity, cls: document.getElementById('leader').className.baseVal, sy: scrollY, sx: scrollX, vv: visualViewport.scale }; });
 exports.lead = lead;
 // State check after things have settled. names = place names in config order.
-exports.state = async (page, names, { settle = true, allowScroll = false } = {}) => {
+// tapped: the active pin was chosen by a tap, which keeps the globe where it is, so it need not be the pin nearest the middle.
+exports.state = async (page, names, { settle = true, allowScroll = false, tapped = false } = {}) => {
   if (settle) { await A.settle(page); await L.sleep(520); }
   const s = await A.snap(page); const cap = await L.cap(page); const ld = await lead(page); const bad = [];
   const shown = s.nodes.filter((n) => n.w >= 0.5 && n.vis >= 0.5 && n.z > 0.05); const d = (n) => Math.hypot(n.x - s.side / 2, n.y - s.side / 2);
@@ -24,7 +25,7 @@ exports.state = async (page, names, { settle = true, allowScroll = false } = {})
     const gap = Math.hypot(ld.x1 - n.x, ld.y1 - n.y); if (Math.abs(gap - (Math.max(15, 0.125 * s.lens) + 3)) > 1.5) bad.push('leader starts ' + gap.toFixed(1) + ' px from the active pin');
     if (ld.op !== '1' && n.vis >= 0.15) bad.push('leader opacity ' + ld.op);
     if (n.lv < 0.99) bad.push('active pin level ' + n.lv.toFixed(2));
-    const best = shown.slice().sort((a, b) => d(a) - d(b))[0]; if (best && d(best) < d(n) - 0.07 * s.lens - 1) bad.push('active is ' + d(n).toFixed(0) + ' px from centre but pin [' + best.m + '] is at ' + d(best).toFixed(0));
+    const best = shown.slice().sort((a, b) => d(a) - d(b))[0]; if (!tapped && best && d(best) < d(n) - 0.07 * s.lens - 1) bad.push('active is ' + d(n).toFixed(0) + ' px from centre but pin [' + best.m + '] is at ' + d(best).toFixed(0));
   } else { if (cap.vis) bad.push('nothing active but caption visible: ' + cap.name); if (shown.length) bad.push('nothing active although pins visible: ' + shown.map((n) => '[' + n.m + ']').join(' ')); }
   s.nodes.forEach((n) => { if (n.i !== s.active && n.lv > 0.001) bad.push('node ' + n.i + ' still highlighted (level ' + n.lv.toFixed(2) + ')'); });
   return { bad, s, cap, ld, shownCount: shown.length, desc: 'zoom ' + s.zoom.toFixed(2) + ' centre ' + s.lon.toFixed(2) + ',' + s.lat.toFixed(2) + ' active ' + (s.active < 0 ? 'none' : '[' + s.nodes[s.active].m + ']' + (s.member >= 0 ? '#' + s.member : '')) + ' caption ' + (cap.vis ? '"' + cap.name + (cap.when ? ', ' + cap.when : '') + (cap.note ? ' / ' + cap.note : '') + '"' : 'hidden') + ' pins in lens ' + shown.length };

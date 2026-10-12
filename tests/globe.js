@@ -127,7 +127,7 @@ const drift = (s0, x0, y0, s1, x1, y1) => { const R0 = s0.lens * s0.zoom, R1 = s
         const o = await L.open(browser, srv.url, { w: W, h: H, ...extra, init: rafCount }); const input = await A.makeInput(o.page, !!extra.touch);
         let r = await state(o.page, NAMES); const first = say(r); const f0 = await o.page.evaluate(() => window.__raf); await L.sleep(2000); const idle1 = await o.page.evaluate(() => window.__raf) - f0;
         const res = [];
-        for (let p = 0; p < NAMES.length; p++) { const got = await A.reach(o.page, input, p, NAMES[p]); const st = await state(o.page, NAMES, { allowScroll: false }); res.push(NAMES[p] + (got.ok && !st.bad.length ? ' ok(' + got.log.length + ')' : ' FAIL ' + got.log.join(',') + ' ' + st.bad.join(';') + ' cap ' + JSON.stringify(got.cap))); }
+        for (let p = 0; p < NAMES.length; p++) { const got = await A.reach(o.page, input, p, NAMES[p]); const st = await state(o.page, NAMES, { allowScroll: false, tapped: true }); res.push(NAMES[p] + (got.ok && !st.bad.length ? ' ok(' + got.log.length + ')' : ' FAIL ' + got.log.join(',') + ' ' + st.bad.join(';') + ' cap ' + JSON.stringify(got.cap))); }
         const f1 = await o.page.evaluate(() => window.__raf); await L.sleep(2000); const idle2 = await o.page.evaluate(() => window.__raf) - f1;
         await input.zoomOutFully(); r = await state(o.page, NAMES);
         console.log('I ' + W + 'x' + H + ' first load: ' + first + ' | idle frames in 2 s at load ' + idle1 + ', zoomed in ' + idle2 + ' | reach: ' + res.join(', ') + ' | zoomed back out: ' + say(r) + ' | console ' + JSON.stringify(o.msgs)); await o.page.close();
